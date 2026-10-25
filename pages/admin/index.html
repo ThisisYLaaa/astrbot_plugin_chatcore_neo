@@ -1898,6 +1898,8 @@ LOADERS.graph = async function(el){
 };
 
 let G = null;
+let GRO = null;   // 图容器尺寸监听（窗口最大化 / 侧栏开合都靠它重排画布）
+let GINT = 0;     // 兜底定时器（rAF 被节流时也能校正）
 let GHANDLERS = [];   // 图谱的 window 级监听器：切换页签时必须摘掉，否则会累积
 
 async function loadGraph(){
@@ -1998,8 +2000,8 @@ function initGraph(d){
     }
     for (let k = 0; k < N.length; k++) {
       const n = N[k];
-      n.vx += (W/2 - n.x) * 0.0022;
-      n.vy += (H/2 - n.y) * 0.0028;
+      n.vx += (G.W/2 - n.x) * 0.0022;
+      n.vy += (G.H/2 - n.y) * 0.0028;
       n.vx *= 0.82; n.vy *= 0.82;
       if (n === G.drag) { n.vx = n.vy = 0; continue; }
       n.x += n.vx * G.alpha; n.y += n.vy * G.alpha;
@@ -2008,7 +2010,7 @@ function initGraph(d){
   }
 
   function draw(){
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, G.W, G.H);
     ctx.save();
     ctx.translate(G.view.x, G.view.y);
     ctx.scale(G.view.k, G.view.k);
@@ -2060,9 +2062,12 @@ function initGraph(d){
     ctx.restore();
   }
 
+  let frame = 0;
   function loop(){
     if (!G || G.cv !== cv) return;
     tick(); draw();
+    // 兜底：每 30 帧核对一次画布尺寸，防止漏掉某次布局变化导致图被拉伸
+    if ((++frame % 30) === 0) resizeGraphCanvas();
     requestAnimationFrame(loop);
   }
   loop();
@@ -2090,18 +2095,17 @@ function initGraph(d){
     else if (G.pan) { G.view.x = ev.clientX - G.pan.x; G.view.y = ev.clientY - G.pan.y; }
   });
   listen("mouseup", function(){ if (G) { G.drag = null; G.pan = null; } });
-  // 窗口尺寸变化时重算画布，否则图会被拉伸/裁切
-  listen("resize", function(){
-    if (!G || G.cv !== cv) return;
-    const b = cv.parentElement.getBoundingClientRect();
-    const w = Math.max(320, b.width), h = Math.max(320, b.height);
-    if (Math.abs(w - G.W) < 2 && Math.abs(h - G.H) < 2) return;
-    G.W = w; G.H = h;
-    const dpr2 = window.devicePixelRatio || 1;
-    cv.width = w * dpr2; cv.height = h * dpr2;
-    ctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
-    fitGraph();
-  });
+  // 容器尺寸变化时重算画布（窗口最大化 / 侧栏出现 / 布局改动都算）
+  listen("resize", function(){ resizeGraphCanvas(); });
+  // window 的 resize 在 iframe 里不一定按时到；盯着容器本身最可靠
+  if (window.ResizeObserver && cv.parentElement) {
+    if (GRO) { try { GRO.disconnect(); } catch (e) {} }
+    GRO = new ResizeObserver(function(){ if (G && G.cv === cv) resizeGraphCanvas(); });
+    GRO.observe(cv.parentElement);
+  }
+  // rAF 在后台标签/无头环境里可能被节流，再用定时器兜一层
+  if (GINT) { clearInterval(GINT); }
+  GINT = setInterval(function(){ if (G && G.cv === cv) resizeGraphCanvas(); }, 800);
   cv.addEventListener("wheel", function(ev){
     ev.preventDefault();
     const r = cv.getBoundingClientRect();
@@ -2116,9 +2120,11 @@ function initGraph(d){
 }
 
 function resizeGraphCanvas(){
-  if (!G || !G.cv || !G.cv.parentElement) return;
-  const b = G.cv.parentElement.getBoundingClientRect();
-  const w = Math.max(320, b.width), h = Math.max(320, b.height);
+  if (!G || !G.cv) return;
+  const b = G.cv.getBoundingClientRect();
+  if (!b.width || !b.height) return;      // 页签隐藏时不要乱改尺寸
+  const w = Math.max(320, Math.round(b.width));
+  const h = Math.max(320, Math.round(b.height));
   if (Math.abs(w - G.W) < 2 && Math.abs(h - G.H) < 2) return;
   const dpr = window.devicePixelRatio || 1;
   const dx = (w - G.W) / 2, dy = (h - G.H) / 2;
