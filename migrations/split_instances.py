@@ -106,7 +106,7 @@ def main() -> int:
 
     # 每个实例可用的人格。默认：全部人格授权给所有实例。
     # 想按实例收窄就在下面写死，例如：
-    #   CUSTOMIZE = {"BotB": ["diy_example"], "BotA": ["*"]}
+    #   CUSTOMIZE = {"BotB": ["persona_a"], "BotA": ["*"]}
     #   —— "*" 表示除被其它实例独占的之外，其余全给。
     CUSTOMIZE: dict[str, list[str]] = {}
     taken = {p for v in CUSTOMIZE.values() for p in v if p != "*"}

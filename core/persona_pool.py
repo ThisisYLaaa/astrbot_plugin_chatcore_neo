@@ -5,7 +5,7 @@
 声明「哪些人格在本实例可用」：
 
     instances/<实例 id>/personas.json
-    {"version": 1, "grants": ["sr_robin_qingge", "diy_example"]}
+    {"version": 1, "grants": ["persona_a", "persona_b"]}
 
 * 授权是**多对多**：同一个人格可以同时给多个实例。
 * 文件不存在 = 该实例**没有任何**可用人格（新实例的默认状态），
