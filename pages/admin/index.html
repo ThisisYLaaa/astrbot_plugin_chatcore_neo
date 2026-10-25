@@ -343,6 +343,22 @@ canvas#gcanvas:active{cursor:grabbing}
   border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:11.5px;color:var(--fg2);
 }
 .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;box-shadow:0 0 6px currentColor}
+/* 节点详情：贴在图的右侧，不占整行 */
+.grapharea{display:flex;gap:12px;align-items:stretch;min-width:0}
+.grapharea > .graphwrap{flex:1 1 auto;min-width:0}
+.graphside{
+  flex:0 0 340px;max-width:340px;min-width:0;
+  max-height:calc(100dvh - 236px);overflow:auto;scrollbar-width:thin;
+}
+.graphside:empty{display:none}
+.graphside > .card{margin:0}
+.graphside .split{grid-template-columns:1fr}
+.graphside .split > div + div{margin-top:12px}
+.graphside .scroll{max-height:260px}
+@media(max-width:1200px){
+  .grapharea{flex-direction:column}
+  .graphside{flex:1 1 auto;max-width:100%;max-height:none}
+}
 
 /* ── Toast（弹簧滑入）── */
 #toast{position:fixed;right:18px;bottom:18px;z-index:99;display:flex;flex-direction:column;gap:9px;align-items:flex-end}
@@ -1843,15 +1859,15 @@ LOADERS.graph = async function(el){
     + '<div class="fix"><button id="btnGSearch" style="margin-bottom:1px"'
     + ' title="在全部图谱条目里做关键词检索">检索</button></div>'
     + '</div><div id="gSearchOut" style="margin-top:10px"></div></div>'
-    + '<div class="graphwrap"><canvas id="gcanvas"></canvas>'
+    + '<div class="grapharea"><div class="graphwrap"><canvas id="gcanvas"></canvas>'
     + '<div class="legend">'
     + '<span><i style="background:#64f0c8;color:#64f0c8"></i>话题</span>'
     + '<span><i style="background:#6ee7a0;color:#6ee7a0"></i>人物</span>'
     + '<span><i style="background:#ffc857;color:#ffc857"></i>事实</span>'
     + '<span><i style="background:#b48cff;color:#b48cff"></i>摘要</span>'
     + '<span class="hint mono" id="gmeta" style="font-size:11px"></span></div></div>'
-    + '</div></div></div>'
-    + '<div id="graphNode"></div>';
+    + '<aside class="graphside" id="graphNode"></aside>'
+    + '</div></div></div></div>';
 
   on("btnGraphReload", "click", function(e){ busy(e.target, loadGraph); });
   on("btnGraphFit", "click", function(){ fitGraph(); });
@@ -1870,6 +1886,13 @@ LOADERS.graph = async function(el){
             }).join("") + '</tbody></table>'
         : '<div class="empty" style="margin-top:12px">（无命中）</div>';
     });
+  });
+  // 详情面板的「收起」：清空并让画布重新占满
+  const nodeBox = document.getElementById("graphNode");
+  nodeBox.addEventListener("click", function(ev){
+    if (!ev.target || !ev.target.closest || !ev.target.closest("[data-close]")) return;
+    nodeBox.innerHTML = "";
+    resizeGraphCanvas();
   });
   await loadGraph();
 };
@@ -2092,6 +2115,20 @@ function initGraph(d){
   fitGraph();
 }
 
+function resizeGraphCanvas(){
+  if (!G || !G.cv || !G.cv.parentElement) return;
+  const b = G.cv.parentElement.getBoundingClientRect();
+  const w = Math.max(320, b.width), h = Math.max(320, b.height);
+  if (Math.abs(w - G.W) < 2 && Math.abs(h - G.H) < 2) return;
+  const dpr = window.devicePixelRatio || 1;
+  const dx = (w - G.W) / 2, dy = (h - G.H) / 2;
+  G.W = w; G.H = h;
+  G.cv.width = w * dpr; G.cv.height = h * dpr;
+  G.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // 视野中心保持不动：平移量补上宽高差的一半
+  G.view.x += dx; G.view.y += dy;
+}
+
 function fitGraph(){
   if (!G || !G.nodes.length) return;
   let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
@@ -2111,11 +2148,13 @@ function fitGraph(){
 
 async function showNode(key){
   const box = document.getElementById("graphNode");
-  box.innerHTML = '<div class="card"><div class="body"><div class="empty">读取节点…</div></div></div>';
+  // 面板出现/消失会改变图的可用宽度：写完立刻重排画布，但保留视野中心
+  const paint = function(html){ box.innerHTML = html; resizeGraphCanvas(); };
+  paint('<div class="card"><div class="body"><div class="empty">读取节点…</div></div></div>');
   const d = await get(withInst("/graph/node?key=" + encodeURIComponent(key)));
   if (d.error) {
-    box.innerHTML = '<div class="card"><div class="body"><div class="empty">'
-      + esc(d.error) + '</div></div></div>';
+    paint('<div class="card"><div class="body"><div class="empty">'
+      + esc(d.error) + '</div></div></div>');
     return;
   }
   const n = d.node, meta = n.meta || {};
@@ -2129,25 +2168,26 @@ async function showNode(key){
     return '<tr><td><span class="tag ' + esc(e.type) + '">' + esc(e.type) + '</span></td>'
       + '<td>' + esc(e.content.slice(0,180)) + '</td></tr>';
   }).join("") || '<tr><td colspan="2" class="empty">没有条目</td></tr>';
-  box.innerHTML =
+  paint(
     '<div class="card"><h2>节点详情'
     + '<span class="tag ' + esc(n.type) + '">' + esc(n.type) + '</span>'
     + '<span class="mono" style="font-size:12px">' + esc(n.value) + '</span>'
-    + '<span class="hint">邻域 ' + d.neighborhood_size + ' 个节点</span></h2>'
+    + '<span class="hint">邻域 ' + d.neighborhood_size + ' 个节点</span>'
+    + '<button data-close="1" style="flex:none" title="收起详情">收起</button></h2>'
     + '<div class="body"><div class="split"><div>'
     + '<div class="hint" style="margin-bottom:6px">邻居（' + (d.neighbors||[]).length + '）</div>'
-    + '<div class="scroll" style="max-height:300px"><table>'
+    + '<div class="scroll"><table>'
     + '<thead><tr><th>关系</th><th>节点</th><th class="num">置信度</th></tr></thead><tbody>'
     + nb + '</tbody></table></div></div><div>'
     + '<div class="hint" style="margin-bottom:6px">关联条目（' + (d.entries||[]).length + '）</div>'
-    + '<div class="scroll" style="max-height:300px"><table>'
+    + '<div class="scroll"><table>'
     + '<thead><tr><th>类型</th><th>内容</th></tr></thead><tbody>'
     + en + '</tbody></table></div></div></div>'
     + (Object.keys(meta).length
         ? '<div class="hint" style="margin:12px 0 6px">节点元数据</div>'
           + jpre(meta)
         : "")
-    + '</div></div>';
+    + '</div></div>');
 }
 
 /* ── 注意力 ── */
