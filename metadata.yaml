@@ -1,0 +1,13 @@
+name: astrbot_plugin_chatcore_neo
+display_name: ChatCore Neo
+short_desc: 人格 × 记忆 × 多实例的聊天内核
+desc: 统一聊天核心：人格状态机（好感度/情绪/淫乱度/恶堕值）、结构化人格框架、长期记忆（SQLite + 向量 + 知识图谱）、注意力与隐性意图、主动消息调度、流式实时分段、角色名识别与印象系统；v2 起支持按平台实例隔离配置/记忆，以及人格池 × 实例的授权矩阵。
+version: v2.0.0
+author: ThisisYLaaa
+repo: https://github.com/ThisisYLaaa/astrbot_plugin_chatcore_neo
+astrbot_version: ">=4.27.0"
+support_platforms:
+  - aiocqhttp
+  - telegram
+  - discord
+  - webchat

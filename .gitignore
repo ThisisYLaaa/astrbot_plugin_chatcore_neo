@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 运行时数据（绝不入库）
+data/
+state/
+memory/
+instances/
+logs/
+*.log
+*.db
+*.db-wal
+*.db-shm
+
+# 迁移产物
+migrations/*_report.json
+migrations/*.bak
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.bak
+*.bak-*

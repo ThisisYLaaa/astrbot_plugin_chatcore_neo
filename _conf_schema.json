@@ -1,0 +1,1351 @@
+{
+    "enabled": {
+        "description": "═══ ① 总开关 ═══\n启用插件",
+        "type": "bool",
+        "hint": "关掉后插件所有功能停止，等同于停用插件（但保留数据与人格）。",
+        "default": true
+    },
+    "debug": {
+        "description": "调试日志",
+        "type": "bool",
+        "hint": "打开后输出状态更新/判定/记忆固化等详细日志，排障用。平时建议关闭。",
+        "default": false
+    },
+    "persona_current": {
+        "description": "═══ ② 人格 ═══\n默认人格 id",
+        "type": "string",
+        "hint": "新会话默认使用的人格 id（如 strinova_kanami）。留空则用第一个人格。\n单个会话可用 /persona <名称> 覆盖。完整 id 列表见 /persona list。",
+        "default": ""
+    },
+    "private_msg_mode": {
+        "description": "私聊发言格式模式",
+        "type": "int",
+        "hint": "1 = 括号描写（允许（神态/动作）描写，可换行分段）；\n2 = 无括号（格式同群聊：不换行、无括号描写、短句，但保留私聊 NSFW 规则）。\n可用 /persona msg 1|2 即时切换。",
+        "default": 1,
+        "options": [
+            1,
+            2
+        ],
+        "labels": [
+            "括号描写",
+            "无括号（同群聊）"
+        ],
+        "min": 1,
+        "max": 2
+    },
+    "privilege_uid": {
+        "description": "特权用户 QQ 号（本实例唯一一名）",
+        "type": "string",
+        "hint": "每个实例（= 一个平台适配器 / 一个机器人 QQ 号）**只能有一名**特权用户。留空 = 本实例没有特权用户（所有人群聊档处理）。改名/换人直接改这里，改完即时生效。",
+        "default": ""
+    },
+    "instance_auto_create": {
+        "description": "自动为新平台实例建配置",
+        "type": "bool",
+        "hint": "打开后，打开管理页或插件启动时会检测「已启用但没有 instances/<id>/config.json」的平台，自动从**本页配置**复制一份作为模板。关闭 = 只告警不建。",
+        "default": true
+    },
+    "instance_new_preset": {
+        "description": "新实例套用「最小可用」预设",
+        "type": "bool",
+        "hint": "打开时，新建实例会在模板基础上覆盖 19 项：关注意力、分段、标记、主动消息、TTS、流式、不回复判定、意图、图谱检索、多人格同台、角色名识别、好感/淫乱/印象、戳一戳、连发合并，并把 privilege_uid 清空。关闭 = 新实例完全照抄模板。\n⚠️ 本页（框架配置）**只是模板**：改这里不会影响已存在实例的 config.json。",
+        "default": true
+    },
+    "unrestricted_list": {
+        "description": "不受制约用户",
+        "type": "list",
+        "hint": "名单内用户即使在「禁止色情内容」下也豁免限制。留空 = 无豁免。",
+        "default": []
+    },    "allow_erotic_content": {
+        "description": "允许回复色情内容",
+        "type": "bool",
+        "hint": "关闭后注入「禁止色情内容」约束（unrestricted_list 内用户仍豁免）。",
+        "default": true
+    },
+    "include_dialog": {
+        "description": "每轮注入角色台词样本",
+        "type": "bool",
+        "hint": "把 dialog.md（角色台词样本）注入每轮上下文。开启可强化口吻，但增加 token。",
+        "default": false
+    },
+    "costar_enabled": {
+        "description": "多人格同台",
+        "type": "bool",
+        "hint": "允许会话在**剧情模式**下同时扮演多个角色（副人格）。\n副人格规则每轮以 temp 形式注入动态段，不落对话记录、不动 system_prompt 前缀。\n增删：/persona cast add|rm|clear，或模型工具 update_costars / show_costars。",
+        "default": true
+    },
+    "costar_max": {
+        "description": "多人格同台：副人格上限",
+        "type": "int",
+        "hint": "单个会话最多同时登场几个副人格（1~8）。超出部分不加入。",
+        "default": 3,
+        "min": 1,
+        "max": 8
+    },
+    "char_mention_enabled": {
+        "description": "识别消息中的角色名并注入资料",
+        "type": "bool",
+        "hint": "纯字符串匹配（本名/英文名/外号），命中就把该角色的短资料注入本轮上下文，避免角色扮演里答「不认识这个人」。\n以 temp 形式注入：只影响本轮，不落聊天记录、也不动 system_prompt 前缀。\n外号在管理页「角色」或 /character 里维护。",
+        "default": true
+    },
+    "char_mention_min_len": {
+        "description": "角色名最短匹配长度",
+        "type": "int",
+        "hint": "默认 2：单字名（明/信/令/汐）不参与匹配，否则「我明白了」「相信」这类日常用词会疯狂误触发。\n设为 1 会启用单字名，但只按「左右不挨汉字」的边界规则匹配（「明 在吗」命中，「我明白了」不命中）。",
+        "default": 2,
+        "min": 1,
+        "max": 6,
+        "condition": {
+            "char_mention_enabled": true
+        }
+    },
+    "char_mention_max_hits": {
+        "description": "单轮最多注入几个角色",
+        "type": "int",
+        "hint": "一条消息里提到多个角色时，按关键词具体程度取前 N 个。",
+        "default": 3,
+        "min": 1,
+        "max": 10,
+        "condition": {
+            "char_mention_enabled": true
+        }
+    },
+    "char_mention_brief_chars": {
+        "description": "角色资料：每条简介截断长度",
+        "type": "int",
+        "default": 60,
+        "min": 10,
+        "max": 300,
+        "condition": {
+            "char_mention_enabled": true
+        }
+    },
+    "char_mention_max_chars": {
+        "description": "角色资料：注入块总长度上限",
+        "type": "int",
+        "hint": "超过就整体截断。命中多个角色时防止把上下文撑大。",
+        "default": 240,
+        "min": 40,
+        "max": 2000,
+        "condition": {
+            "char_mention_enabled": true
+        }
+    },
+    "group_card_template": {
+        "description": "切换人格时的群名片模板",
+        "type": "string",
+        "hint": "切换人格时把 bot 的群名片改成该模板，{name} 替换为角色名。留空 = 不改群名片。\n仅 aiocqhttp 适配器支持，其它平台会静默跳过。",
+        "default": "AA~{name}"
+    },
+    "identity_confirm_inject": {
+        "description": "群聊注入「本轮对话对象」身份强调",
+        "type": "bool",
+        "hint": "明确告诉模型本轮在对谁说话、对方是什么等级，防止把普通群友误当成引航者/主人。",
+        "default": true
+    },
+    "thinking_mode": {
+        "description": "思考过程引导",
+        "type": "string",
+        "hint": "在回复前注入内心思考引导，让角色更像在用脑子说话。\n开启 = 注入【思考过程引导】段落（理解/判断/回应/认知边界）。推荐开启。",
+        "default": "开启",
+        "options": [
+            "开启",
+            "关闭"
+        ]
+    },
+    "stutter_probability": {
+        "description": "结巴触发概率",
+        "type": "float",
+        "hint": "满足条件时角色结巴一次的概率。每个会话只触发一次（stutter_done 守）。0 = 关闭。",
+        "default": 0.3,
+        "min": 0.0,
+        "max": 1.0
+    },
+    "enable_affection": {
+        "description": "═══ ③ 状态数值 ═══\n启用好感度",
+        "type": "bool",
+        "hint": "好感度影响注入的内心描摹与主动程度。",
+        "default": true
+    },
+    "initial_affection": {
+        "description": "新用户初始好感度（私聊 / 特权）",
+        "type": "int",
+        "hint": "0~100。≥80 可撒娇，≥90 有占有欲。",
+        "default": 65,
+        "min": 0,
+        "max": 100,
+        "condition": {
+            "enable_affection": true
+        }
+    },
+    "group_member_initial_affection": {
+        "description": "群聊普通成员初始好感度",
+        "type": "int",
+        "hint": "群聊里非特权用户首次对话的初始好感度。\n降档可避免普通群成员天然亲近导致的乱认特权称谓（引航者/主人）。",
+        "default": 30,
+        "min": 0,
+        "max": 100,
+        "condition": {
+            "enable_affection": true
+        }
+    },
+    "enable_lewdness": {
+        "description": "启用淫乱度 / 恶堕值",
+        "type": "bool",
+        "hint": "关闭后这两个数值不再增减，也不注入相关描述。",
+        "default": true
+    },
+    "initial_lewdness": {
+        "description": "初始淫乱度",
+        "type": "int",
+        "default": 20,
+        "min": 0,
+        "max": 100,
+        "condition": {
+            "enable_lewdness": true
+        }
+    },
+    "initial_depravity": {
+        "description": "初始恶堕值",
+        "type": "int",
+        "default": 0,
+        "min": 0,
+        "max": 100,
+        "condition": {
+            "enable_lewdness": true
+        }
+    },
+    "save_conversation_log": {
+        "description": "把对话记入状态日志",
+        "type": "bool",
+        "hint": "状态日志用于「内心活动注入」与重复消息提示。关闭后不记录。",
+        "default": true
+    },
+    "max_history_count": {
+        "description": "状态日志上限（条）",
+        "type": "int",
+        "hint": "每个会话保留的最大条数。0 = 不限。",
+        "default": 30,
+        "min": 0,
+        "max": 500,
+        "condition": {
+            "save_conversation_log": true
+        }
+    },
+    "history_timeout_seconds": {
+        "description": "状态日志保留窗口（秒）",
+        "type": "int",
+        "hint": "除「最近 N 条」外，再把该时间窗内的全部消息一并保留，避免刷屏时被截断。",
+        "default": 600,
+        "min": 0,
+        "condition": {
+            "save_conversation_log": true
+        }
+    },
+    "save_bot_state_to_history": {
+        "description": "把 bot 内心活动写进状态日志",
+        "type": "bool",
+        "default": true,
+        "condition": {
+            "save_conversation_log": true
+        }
+    },
+    "bot_thought_mode": {
+        "description": "内心活动详略",
+        "type": "string",
+        "hint": "内心想法 = 自然语言感受（最省 token）；\n简短 = 摘要 + 数值；具体 = 原文 + 数值。",
+        "default": "简短",
+        "condition": {
+            "save_conversation_log": true
+        },
+        "options": [
+            "内心想法",
+            "简短",
+            "具体"
+        ]
+    },
+    "inject_conversation_context": {
+        "description": "注入近期内心活动",
+        "type": "bool",
+        "hint": "把 bot 近期的内心活动注入上下文，让跨轮心理更连贯（增加 token）。",
+        "default": false
+    },
+    "conversation_context_entries": {
+        "description": "内心活动注入条数",
+        "type": "int",
+        "default": 20,
+        "min": 0,
+        "max": 100,
+        "condition": {
+            "inject_conversation_context": true
+        }
+    },
+    "user_msg_store_mode": {
+        "description": "用户消息存储方式",
+        "type": "string",
+        "hint": "存「总结」可省 token；存「原文」保留细节。",
+        "default": "总结",
+        "condition": {
+            "save_conversation_log": true
+        },
+        "options": [
+            "总结",
+            "原文"
+        ],
+        "labels": [
+            "意图摘要（省 token）",
+            "保存原文"
+        ]
+    },
+    "user_msg_max_chars": {
+        "description": "状态日志里用户消息截断长度",
+        "type": "int",
+        "default": 200,
+        "min": 20,
+        "max": 2000,
+        "condition": {
+            "save_conversation_log": true
+        }
+    },
+    "enable_impression": {
+        "description": "═══ ④ 用户印象 ═══\n启用印象自动总结",
+        "type": "bool",
+        "hint": "每 N 轮后台总结一次对用户的印象，供后续对话参考。",
+        "default": true
+    },
+    "impression_threshold": {
+        "description": "印象更新间隔（轮）",
+        "type": "int",
+        "default": 10,
+        "min": 1,
+        "max": 500,
+        "condition": {
+            "enable_impression": true
+        }
+    },
+    "impression_max_chars": {
+        "description": "印象最大字数",
+        "type": "int",
+        "default": 300,
+        "min": 50,
+        "max": 2000,
+        "condition": {
+            "enable_impression": true
+        }
+    },
+    "impression_model": {
+        "description": "印象总结使用的模型",
+        "type": "string",
+        "hint": "留空 = 沿用当前会话的主模型。也可用上方下拉精确指定某个模型。",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+            "enable_impression": true
+        }
+    },
+    "impression_nsfw": {
+        "description": "同时生成 NSFW 印象",
+        "type": "bool",
+        "default": true,
+        "condition": {
+            "enable_impression": true
+        }
+    },
+    "enable_nsfw_impression": {
+        "description": "注入 NSFW 印象",
+        "type": "bool",
+        "default": true,
+        "condition": {
+            "enable_impression": true,
+            "impression_nsfw": true
+        }
+    },
+    "impression_timeout": {
+        "description": "印象总结超时（秒）",
+        "type": "int",
+        "default": 30,
+        "min": 1,
+        "max": 180,
+        "condition": {
+            "enable_impression": true
+        }
+    },
+    "enable_memory": {
+        "description": "═══ ⑤ 长期记忆 ═══\n启用长期记忆",
+        "type": "bool",
+        "hint": "关闭后退化为无记忆（仍保留已存数据，只是不读不写）。",
+        "default": true
+    },
+    "provider_embedding": {
+        "description": "Embedding 提供方",
+        "type": "string",
+        "hint": "填 embedding 模型的 provider id。留空 = 用 AstrBot 全局默认 embedding 模型。\n⚠️ AstrBot 的配置表单没有 embedding 选择器（只有 chat/stt/tts 三种），所以这里是手填 id；填错会导致长期记忆整体静默关闭（不影响聊天）。",
+        "default": "",
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_top_k": {
+        "description": "每轮召回条数",
+        "type": "int",
+        "default": 5,
+        "min": 0,
+        "max": 30,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_min_score": {
+        "description": "召回相似度下限",
+        "type": "float",
+        "default": 0.35,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_decay_days": {
+        "description": "记忆半衰期（天）",
+        "type": "float",
+        "default": 30.0,
+        "min": 1.0,
+        "max": 3650.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_persona_policy": {
+        "description": "记忆的人格策略",
+        "type": "int",
+        "hint": "0 关闭：跨人格共享，仅给他人格记忆加「来源人格」前缀标注（默认）；\n1 本命优先：当前人格的记忆优先，别人格的记忆降权保留并标注；\n2 严格隔离：只召回当前人格的记忆。\n⚠️ 1/2 会减少召回条数（人格记忆少时尤其明显）；标注前缀在三种模式下都保留。",
+        "default": 0,
+        "options": [
+            0,
+            1,
+            2
+        ],
+        "labels": [
+            "关闭",
+            "本命优先（降权）",
+            "严格隔离"
+        ],
+        "min": 0,
+        "max": 2,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_consolidate_turns": {
+        "description": "记忆固化：多少轮固化一次",
+        "type": "int",
+        "hint": "攒够这么多轮对话才做总结 + 建图（控制 LLM 调用成本）。\n没攒够的对话会持久化保留，重启不丢。",
+        "default": 10,
+        "min": 2,
+        "max": 200,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_summary_model": {
+        "description": "记忆固化：使用的模型",
+        "type": "string",
+        "hint": "留空 = 沿用当前会话的主模型。也可用上方下拉精确指定某个模型。",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_summary_timeout": {
+        "description": "记忆固化：超时（秒）",
+        "type": "int",
+        "hint": "超时降级为「原文当摘要」，记忆不丢。",
+        "default": 30,
+        "min": 1,
+        "max": 180,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_summary_max_chars": {
+        "description": "记忆固化：送入模型的最大字符",
+        "type": "int",
+        "default": 4000,
+        "min": 200,
+        "max": 20000,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_inject_max_chars": {
+        "description": "记忆注入：每条最大字符",
+        "type": "int",
+        "hint": "图谱条目正文自带 Summary，较长，注入时截断。",
+        "default": 300,
+        "min": 50,
+        "max": 2000,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_recall_gate": {
+        "description": "召回闸门：跳过无实词的短消息",
+        "type": "bool",
+        "hint": "开启后，「嗯」「草」「哈哈」「？？？」这类没有语义的消息不触发召回 —— 省一次 embedding 调用，也避免召回一堆噪音。\n只要消息里出现任意一个正常词就会照常召回，判定刻意保守。",
+        "default": true,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_reembed_batch": {
+        "description": "维度迁移：每批重编码条数",
+        "type": "int",
+        "hint": "换 embedding 模型后旧向量会全部失配（记忆静默失效），插件会自动在后台分批重编码。\n这个值控制每批条数：调小更省资源、调大更快跑完。",
+        "default": 32,
+        "min": 1,
+        "max": 512,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_kind_decay": {
+        "description": "记忆衰减：按类型区分半衰期",
+        "type": "bool",
+        "hint": "开启后「喜好/事实」类记忆衰减得慢（半衰期 ×3 / ×2），「闲聊」类衰减得快（×0.5），并按重要度微调。\n关闭 = 所有记忆用同一个半衰期（旧行为）。",
+        "default": true,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_supersede": {
+        "description": "记忆取代：新记忆降权旧记忆",
+        "type": "bool",
+        "hint": "固化出新记忆时，如果它和某条旧记忆高度相似且话题相同，就认为旧记忆「被取代」并降权（**只降权，不删除**）。\n降权只在问「当前状态」时生效；问「以前/当时」时旧记忆照常召回。",
+        "default": true,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "memory_mmr": {
+        "description": "召回去冗余：同主题只留 1~2 条",
+        "type": "bool",
+        "hint": "开启后对候选做 MMR 去冗余，避免同一个话题的近似记忆占满注入条数（实测同一个「蛋包饭」话题产出过 5 条几乎一样的记忆）。\n关闭 = 纯按分数取 top-k。",
+        "default": true,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "enable_graph_retrieval": {
+        "description": "启用图谱检索路",
+        "type": "bool",
+        "hint": "关闭后退化为纯向量召回（只有文档路）。图谱仍在构建，只是不参与召回。",
+        "default": true,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_embed_entries": {
+        "description": "给图谱条目算向量",
+        "type": "bool",
+        "hint": "开启 = 图谱路是 BM25 + 向量；关闭 = 纯 BM25（省 embedding 调用）。",
+        "default": true,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_max_embed_per_memory": {
+        "description": "每次固化最多给几条条目算向量",
+        "type": "int",
+        "hint": "图谱条目按「话题 × 事实」组合增长较快，限制单次成本。0 = 不算。",
+        "default": 12,
+        "min": 0,
+        "max": 100,
+        "condition": {
+            "enable_memory": true,
+            "graph_embed_entries": true
+        }
+    },
+    "graph_max_topics": {
+        "description": "图谱：每条记忆最多几个话题",
+        "type": "int",
+        "default": 6,
+        "min": 1,
+        "max": 20,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_max_participants": {
+        "description": "图谱：每条记忆最多几个参与者",
+        "type": "int",
+        "default": 8,
+        "min": 1,
+        "max": 30,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_max_facts": {
+        "description": "图谱：每条记忆最多几条事实",
+        "type": "int",
+        "default": 8,
+        "min": 1,
+        "max": 30,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "document_route_weight": {
+        "description": "双路融合：文档路权重",
+        "type": "float",
+        "default": 0.65,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_route_weight": {
+        "description": "双路融合：图谱路权重",
+        "type": "float",
+        "default": 0.35,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "cross_route_bonus": {
+        "description": "双路融合：两路都命中的加成",
+        "type": "float",
+        "hint": "交叉验证信号：文档路和图谱路同时命中同一条记忆时加分。",
+        "default": 0.08,
+        "min": 0.0,
+        "max": 0.5,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_score_alpha": {
+        "description": "图谱路：RRF 权重",
+        "type": "float",
+        "default": 0.55,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_score_beta": {
+        "description": "图谱路：重要度权重",
+        "type": "float",
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_score_gamma": {
+        "description": "图谱路：新近度权重",
+        "type": "float",
+        "default": 0.15,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "graph_score_delta": {
+        "description": "图谱路：图谱置信度权重",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "decay_rate": {
+        "description": "图谱路：新近度衰减率",
+        "type": "float",
+        "hint": "recency = exp(-decay_rate × 天数)。越大越偏向新记忆。",
+        "default": 0.01,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "enable_attention": {
+        "description": "═══ ⑥ 注意力与判定 ═══\n启用注意力插话",
+        "type": "bool",
+        "hint": "群聊里按概率决定是否主动接话（被 @ 等硬触发一定回复）。",
+        "default": true
+    },
+    "attention_bubble_base": {
+        "description": "注意力：自发接话基础概率",
+        "type": "float",
+        "default": 0.03,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_active_cap": {
+        "description": "注意力：概率上限",
+        "type": "float",
+        "default": 0.3,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_decay_minutes": {
+        "description": "注意力：衰减尺度（分钟）",
+        "type": "float",
+        "default": 3.0,
+        "min": 0.1,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_hard_boost": {
+        "description": "注意力：被 @ 后的加成",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_cooldown": {
+        "description": "注意力：回复后冷却（秒）",
+        "type": "float",
+        "default": 20.0,
+        "min": 0.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_backoff": {
+        "description": "注意力：落空退避系数",
+        "type": "float",
+        "hint": "判定为「不回复」后，下次接话概率乘以该系数（读空气）。",
+        "default": 0.5,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_hard_trigger_force": {
+        "description": "注意力：硬触发必定回复",
+        "type": "bool",
+        "hint": "关闭后，@/指令/私聊只是把概率抬高，不强制回复。",
+        "default": true,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_wake_by_role": {
+        "description": "注意力：按身份判定唤醒",
+        "type": "bool",
+        "hint": "开启后管理员的普通发言也算硬触发。",
+        "default": false,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "enable_no_reply_judge": {
+        "description": "启用不回复判定",
+        "type": "bool",
+        "hint": "用独立模型判断这条消息到底要不要回，避免无意义接话。",
+        "default": true
+    },
+    "no_reply_judge_model": {
+        "description": "判定：使用的模型",
+        "type": "string",
+        "hint": "留空 = 沿用当前会话的主模型。也可用上方下拉精确指定某个模型。",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+            "enable_no_reply_judge": true
+        }
+    },
+    "no_reply_judge_skip_private": {
+        "description": "判定：私聊跳过",
+        "type": "bool",
+        "hint": "私聊默认必回，跳过判定可省一次调用。",
+        "default": true,
+        "condition": {
+            "enable_no_reply_judge": true
+        }
+    },
+    "no_reply_judge_attention_only": {
+        "description": "判定：只判定注意力命中的消息",
+        "type": "bool",
+        "default": false,
+        "condition": {
+            "enable_no_reply_judge": true
+        }
+    },
+    "no_reply_judge_exempt_users": {
+        "description": "判定：豁免用户",
+        "type": "list",
+        "hint": "名单内用户的消息不判定，直接回复（留空 = 无豁免）。",
+        "default": [
+            "10001"
+        ],
+        "condition": {
+            "enable_no_reply_judge": true
+        }
+    },
+    "no_reply_judge_prompt": {
+        "description": "判定：自定义 system 提示词",
+        "type": "text",
+        "hint": "留空使用内置提示词。只有当你想整体替换判定逻辑时才填。",
+        "default": "",
+        "condition": {
+            "enable_no_reply_judge": true
+        }
+    },
+    "no_reply_judge_timeout": {
+        "description": "判定：超时（秒）",
+        "type": "int",
+        "hint": "超时按「照常回复」处理（fail-open，不会因为判定超时而不回）。",
+        "default": 5,
+        "min": 1,
+        "max": 120,
+        "condition": {
+            "enable_no_reply_judge": true
+        }
+    },
+    "enable_intent": {
+        "description": "启用隐性意图分析",
+        "type": "bool",
+        "hint": "捕捉「没点名但在等回应」的消息（如「好累啊…」）。",
+        "default": true
+    },
+    "intent_model": {
+        "description": "隐性意图：使用的模型",
+        "type": "string",
+        "hint": "留空 = 沿用当前会话的主模型。也可用上方下拉精确指定某个模型。",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+            "enable_intent": true
+        }
+    },
+    "intent_interval_minutes": {
+        "description": "隐性意图：抽样间隔（分钟）",
+        "type": "int",
+        "hint": "不是每条都调模型，按该间隔抽样一次（0 = 每条都判，费 token）。",
+        "default": 30,
+        "min": 0,
+        "max": 1440,
+        "condition": {
+            "enable_intent": true
+        }
+    },
+    "intent_timeout": {
+        "description": "隐性意图：超时（秒）",
+        "type": "int",
+        "default": 15,
+        "min": 1,
+        "max": 120,
+        "condition": {
+            "enable_intent": true
+        }
+    },
+    "intent_bump": {
+        "description": "隐性意图命中时的注意力加成",
+        "type": "float",
+        "default": 0.09,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_intent": true
+        }
+    },
+    "intent_trigger_score": {
+        "description": "隐性意图：直接接话的分数阈值",
+        "type": "int",
+        "default": 70,
+        "min": 0,
+        "max": 100,
+        "condition": {
+            "enable_intent": true
+        }
+    },
+    "enable_streaming": {
+        "description": "═══ ⑦ 输出 ═══\n启用流式传输",
+        "type": "bool",
+        "hint": "LLM 请求走流式：token 一到就做正则处理（§n、[[at:]]、句尾标点）并切段实时发出，不用等整段生成完。\n开启后**「私聊/群聊分段使用子代理」那一组开关会隐藏**（流式下不使用子代理 —— 文本已经在往外流，等不了 LLM 分段），切分改用 segment_max_len / segment_min_len。\n平台不支持流式（有原生流式除外）时会自动退回整段发送。",
+        "default": false
+    },
+    "stream_send_interval": {
+        "description": "流式：分段最小发送间隔（秒）",
+        "type": "float",
+        "hint": "两条分段之间的最短间隔，避免把平台刷成机关枪（QQ 有频率限制）。0 = 不限速。",
+        "default": 0.8,
+        "min": 0,
+        "max": 10,
+        "condition": {
+            "enable_streaming": true
+        }
+    },
+    "enable_segmentation": {
+        "description": "启用消息分段",
+        "type": "bool",
+        "hint": "把长回复切成多条发送（由 AstrBot 管道按间隔逐条发出）。",
+        "default": true
+    },
+    "segment_max_len": {
+        "description": "分段：单条上限（字符）",
+        "type": "int",
+        "default": 120,
+        "min": 20,
+        "max": 1000,
+        "condition": {
+            "enable_segmentation": true
+        }
+    },
+    "segment_min_len": {
+        "description": "分段：碎片合并下限（字符）",
+        "type": "int",
+        "hint": "短于该长度的碎片并回相邻段，避免「嗯。」这种碎嘴。",
+        "default": 8,
+        "min": 1,
+        "max": 200,
+        "condition": {
+            "enable_segmentation": true
+        }
+    },
+    "private_format_agent": {
+        "description": "私聊分段使用子代理",
+        "type": "bool",
+        "hint": "用 LLM 看语义块决定切点（返回 JSON 数组）；失败自动回退本地标点规则。",
+        "default": true,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false
+        }
+    },
+    "private_format_model": {
+        "description": "私聊分段子代理：模型",
+        "type": "string",
+        "hint": "留空 = 沿用当前会话的主模型。也可用上方下拉精确指定某个模型。",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false,
+            "private_format_agent": true
+        }
+    },
+    "private_format_timeout": {
+        "description": "私聊分段子代理：超时（秒）",
+        "type": "int",
+        "default": 10,
+        "min": 1,
+        "max": 60,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false,
+            "private_format_agent": true
+        }
+    },
+    "private_format_threshold": {
+        "description": "私聊分段子代理：最小长度",
+        "type": "int",
+        "hint": "低于该长度不调用（短回复硬切没意义）。0 = 总是调用。",
+        "default": 0,
+        "min": 0,
+        "max": 500,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false,
+            "private_format_agent": true
+        }
+    },
+    "group_format_agent": {
+        "description": "群聊分段使用子代理",
+        "type": "bool",
+        "default": true,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false
+        }
+    },
+    "group_format_model": {
+        "description": "群聊分段子代理：模型",
+        "type": "string",
+        "hint": "留空 = 沿用当前会话的主模型。也可用上方下拉精确指定某个模型。",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false,
+            "group_format_agent": true
+        }
+    },
+    "group_format_timeout": {
+        "description": "群聊分段子代理：超时（秒）",
+        "type": "int",
+        "default": 10,
+        "min": 1,
+        "max": 60,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false,
+            "group_format_agent": true
+        }
+    },
+    "group_format_threshold": {
+        "description": "群聊分段子代理：最小长度",
+        "type": "int",
+        "hint": "短于该长度的群聊回复不做分段（省一次调用）。",
+        "default": 20,
+        "min": 0,
+        "max": 500,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false,
+            "group_format_agent": true
+        }
+    },
+    "group_format_min_segment": {
+        "description": "群聊分段：每段最少字符",
+        "type": "int",
+        "hint": "太碎的片段会并进相邻段。",
+        "default": 18,
+        "min": 1,
+        "max": 200,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false,
+            "group_format_agent": true
+        }
+    },
+    "segment_verify_ratio": {
+        "description": "分段子代理：内容守恒阈值",
+        "type": "float",
+        "hint": "把段数组拼回去与原文比对；低于该相似度即判定「被改写」并回退本地规则。\n1.0 = 必须逐字一致。宁可切得难看，也不能让角色说的话被改掉。",
+        "default": 0.95,
+        "min": 0.5,
+        "max": 1.0,
+        "condition": {
+            "enable_segmentation": true,
+            "enable_streaming": false
+        }
+    },
+    "enable_markers": {
+        "description": "启用 [[at:]] / [[reply:]] 标记",
+        "type": "bool",
+        "hint": "允许模型用标记指定 @ 和引用，插件会转成真正的消息组件。",
+        "default": true
+    },
+    "enable_quote": {
+        "description": "启用引用回溯",
+        "type": "bool",
+        "hint": "用户引用某条消息时，把被引用的原文取回附给模型。",
+        "default": true
+    },
+    "enable_recall_cancel": {
+        "description": "启用撤回取消",
+        "type": "bool",
+        "hint": "用户撤回消息时，若回复还没发出则一并取消。",
+        "default": true
+    },
+    "merge_pending_messages": {
+        "description": "合并用户连发的消息",
+        "type": "bool",
+        "hint": "用户在短时间内连发多条时合并成一轮回应，不逐条回。",
+        "default": true
+    },
+    "merge_window_seconds": {
+        "description": "连发合并：时间窗（秒）",
+        "type": "float",
+        "default": 8.0,
+        "min": 0.5,
+        "max": 120.0,
+        "condition": {
+            "merge_pending_messages": true
+        }
+    },
+    "merge_notice": {
+        "description": "连发合并：提示语",
+        "type": "string",
+        "hint": "留空使用内置提示。填了会替换掉默认的「用户连发多条」说明。",
+        "default": "",
+        "condition": {
+            "merge_pending_messages": true
+        }
+    },
+    "poke_enabled": {
+        "description": "启用戳一戳回应",
+        "type": "bool",
+        "hint": "别人戳 bot 时按概率回应（仅 aiocqhttp 类适配器会收到该事件）。",
+        "default": true
+    },
+    "poke_only_self": {
+        "description": "戳一戳：只回应戳自己的",
+        "type": "bool",
+        "default": true,
+        "condition": {
+            "poke_enabled": true
+        }
+    },
+    "poke_probability": {
+        "description": "戳一戳：回应概率",
+        "type": "float",
+        "default": 1.0,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "poke_enabled": true
+        }
+    },
+    "poke_cool_down_seconds": {
+        "description": "戳一戳：冷却（秒）",
+        "type": "float",
+        "default": 60.0,
+        "min": 0.0,
+        "condition": {
+            "poke_enabled": true
+        }
+    },
+    "poke_reply_mode": {
+        "description": "戳一戳：回应方式",
+        "type": "string",
+        "default": "llm",
+        "condition": {
+            "poke_enabled": true
+        },
+        "options": [
+            "llm",
+            "text"
+        ],
+        "labels": [
+            "交给模型生成",
+            "固定文案"
+        ]
+    },
+    "poke_text": {
+        "description": "戳一戳：固定文案",
+        "type": "string",
+        "default": "别戳我啦~",
+        "condition": {
+            "poke_enabled": true,
+            "poke_reply_mode": "text"
+        }
+    },
+    "enable_proactive": {
+        "description": "═══ ⑧ 主动消息 ═══\n启用主动消息",
+        "type": "bool",
+        "hint": "在会话安静一段时间后，由 bot 主动发起话题。这是本功能的**总开关（放行）**：关掉后整个功能停止，分会话配置一律不作数；打开它**不等于**所有会话都会主动开口 —— 还要在管理页「主动消息 → 分会话配置」里给具体会话选「开启」（opt-in，没有单独配置过的会话不会开口）。",
+        "default": true
+    },
+    "proactive_min_interval": {
+        "description": "最小间隔（分钟）",
+        "type": "int",
+        "default": 45,
+        "min": 1,
+        "max": 1440,
+        "condition": {
+            "enable_proactive": true
+        }
+    },
+    "proactive_idle_minutes": {
+        "description": "空闲阈值（分钟）",
+        "type": "int",
+        "hint": "会话安静超过该时长才考虑主动发起。",
+        "default": 90,
+        "min": 1,
+        "max": 10080,
+        "condition": {
+            "enable_proactive": true
+        }
+    },
+    "proactive_quiet_hours": {
+        "description": "免打扰时段",
+        "type": "string",
+        "hint": "该时段内不主动发消息。支持跨零点（如 23:30-07:30）。",
+        "default": "23:30-07:30",
+        "condition": {
+            "enable_proactive": true
+        }
+    },
+    "proactive_silent_max": {
+        "description": "静默连发上限（条）",
+        "type": "int",
+        "hint": "群里**一直没人说话**时，bot 最多连发几条主动消息就暂停（默认 2；填 0 = 不限制）。这是主动消息唯一的总量闸门 —— 群里没人时「空闲」判据永远满足，只剩最小间隔在拦，bot 会一条接一条地自言自语。等群里有人说话，计数立即归零、恢复正常。可按会话在管理页「主动消息 → 分会话配置 → 静默上限」单独设置。",
+        "default": 2,
+        "min": 0,
+        "max": 50,
+        "condition": {
+            "enable_proactive": true
+        }
+    },
+    "enable_tts": {
+        "description": "═══ ⑨ 语音合成 ═══\n启用 TTS",
+        "type": "bool",
+        "hint": "把回复同时合成为语音发出。合成失败会静默降级为纯文字。",
+        "default": false
+    },
+    "tts_provider": {
+        "description": "TTS 提供方",
+        "type": "string",
+        "hint": "留空 = 用 AstrBot 全局默认 TTS 模型。",
+        "default": "",
+        "_special": "select_provider_tts",
+        "condition": {
+            "enable_tts": true
+        }
+    },
+    "tts_only_private": {
+        "description": "仅在私聊启用 TTS",
+        "type": "bool",
+        "default": true,
+        "condition": {
+            "enable_tts": true
+        }
+    },
+    "tts_max_chars": {
+        "description": "TTS：最长字符数",
+        "type": "int",
+        "hint": "超过该长度的回复不合成语音（避免长语音）。",
+        "default": 200,
+        "min": 10,
+        "max": 2000,
+        "condition": {
+            "enable_tts": true
+        }
+    },
+    "enable_admin_page": {
+        "description": "═══ ⑩ 管理页 ═══\n启用 WebUI 管理页",
+        "type": "bool",
+        "hint": "启用管理接口与内置管理页面（WebUI → 插件 → ChatCore Neo → admin）。",
+        "default": true
+    },
+    "tool_result_keep_rounds": {
+        "description": "保留最近几轮的工具结果",
+        "type": "int",
+        "hint": "被取代的工具结果会从历史里剥离（role:\"tool\" 不受 _no_save 保护）。\n保留太多会持续占用上下文。",
+        "default": 1,
+        "min": 0,
+        "max": 5
+    },
+    "strip_history_reminders": {
+        "description": "剥离历史里的系统提醒块",
+        "type": "bool",
+        "hint": "框架往每条用户消息贴的 <system_reminder>（用户ID/群名/时间戳、群聊上下文流水）会随消息永久留在历史里，实测占整个提示词的 17%。\n开启后每轮请求把历史中的这些块剥掉（当轮消息不受影响）。",
+        "default": true
+    },
+    "quote_max_chars": {
+        "description": "引用回溯：被引用正文最多保留多少字符",
+        "type": "int",
+        "hint": "一条长文引用足以挤爆上下文，这里限制它的长度。",
+        "default": 400,
+        "min": 20,
+        "max": 4000,
+        "condition": {
+            "enable_quote": true
+        }
+    },
+    "attention_backoff_floor": {
+        "description": "注意力：退避下限",
+        "type": "float",
+        "hint": "连续落空时概率最低降到这个系数，防止永远不再接话。",
+        "default": 0.25,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_followup_boost": {
+        "description": "注意力：刚被回复后的加成",
+        "type": "float",
+        "hint": "刚跟我互动过的人再说话，接话概率更高。",
+        "default": 0.15,
+        "min": 0.0,
+        "max": 1.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_others_window": {
+        "description": "注意力：读空气的观察窗口（秒）",
+        "type": "float",
+        "hint": "窗口内别人说话越密，越不插话。",
+        "default": 60.0,
+        "min": 5.0,
+        "max": 600.0,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "attention_others_limit": {
+        "description": "注意力：读空气的发言条数阈值",
+        "type": "int",
+        "hint": "窗口内别人超过这么多条时降低接话概率。",
+        "default": 6,
+        "min": 1,
+        "max": 50,
+        "condition": {
+            "enable_attention": true
+        }
+    },
+    "intent_prompt": {
+        "description": "隐性意图：自定义 system 提示词",
+        "type": "text",
+        "hint": "留空使用内置提示词。只有想整体替换判定逻辑时才填。",
+        "condition": {
+            "enable_intent": true
+        },
+        "default": ""
+    },
+    "memory_max_atoms": {
+        "description": "每会话最多保留多少条记忆",
+        "type": "int",
+        "hint": "超出后按重要度+新近度淘汰。0 = 不限制（会一直膨胀）。",
+        "default": 2000,
+        "min": 0,
+        "max": 100000,
+        "condition": {
+            "enable_memory": true
+        }
+    },
+    "block_unmatched_command": {
+        "description": "未命中命令的唤醒消息不触发 LLM",
+        "type": "bool",
+        "hint": "群聊里以唤醒前缀（默认 /）开头、但没命中任何命令的消息（比如打错字），直接忽略，不消耗 LLM 请求。@ 机器人或引用机器人消息时不受影响。",
+        "default": true
+    },
+    "call_prefix": {
+        "description": "叫醒词（只回复，不触发指令）",
+        "type": "list",
+        "hint": "以这些词开头的消息会被叫醒进 LLM 回复，但**不会命中任何指令**。例如填 [\"^\"]：输入 ^persona 不会执行 persona 指令，而是把 \"persona\" 当普通消息发给机器人（机器人收到的文本已去掉 ^）。不要把这些词也填进「平台设置→唤醒前缀」，那会让指令重新生效。留空 = 不启用。",
+        "default": []
+    },
+    "segment_command_output": {
+        "description": "对命令输出也做分段",
+        "type": "bool",
+        "hint": "命令（/sd、/-luck…）返回的通常是多行结构化文本，换行有意义。开启后会被按聊天回复的规则切开、拆成多条消息。默认关闭。",
+        "default": false
+    },
+    "pipeline_trace_seconds": {
+        "description": "管道耗时告警阈值（秒）",
+        "type": "float",
+        "hint": "从消息进入管道到真正发出 LLM 请求，超过这个秒数就打一条 WARNING，用来定位「回复很慢」是慢在哪一段。设很大可关闭。",
+        "default": 8.0,
+        "min": 1.0,
+        "max": 600.0
+    }
+}

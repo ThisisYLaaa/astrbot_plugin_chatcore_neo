@@ -1,0 +1,3350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatCore Neo · 心核观测站</title>
+<style>
+/* ────────────────────────────────────────────────
+   NEO 心核观测站
+   设计方向：深夜仪器舱 —— 磷光青 × 冰蓝，等宽数字仪表
+   布局：侧栏导航 + 单一滚动主区（根治旧版双层 sticky 错位）
+   ──────────────────────────────────────────────── */
+:root{
+  --bg0:#060a13; --bg1:#0a101d;
+  --panel:rgba(16,23,40,.66); --panel2:rgba(22,31,52,.5);
+  --line:rgba(136,160,208,.14); --line2:rgba(136,160,208,.28);
+  --fg:#e8edf7; --fg2:#9aa8c4; --fg3:#5f6d8c;
+  --acc:#64f0c8; --acc2:#7dd3fc; --accink:#04241c;
+  --ok:#6ee7a0; --warn:#ffc857; --bad:#ff6b81;
+  --person:#6ee7a0; --topic:#64f0c8; --fact:#ffc857; --summary:#b48cff;
+  --mono:"Cascadia Code","JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
+  --grad:linear-gradient(120deg,#64f0c8,#7dd3fc);
+  --shadow:0 12px 36px rgba(2,6,18,.5);
+  --r:14px; --r2:10px; --sp:16px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg0); color:var(--fg);
+  font:13.5px/1.65 var(--sans);
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+::selection{background:rgba(100,240,200,.28)}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:rgba(125,211,252,.16);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+*::-webkit-scrollbar-thumb:hover{background:rgba(125,211,252,.34);background-clip:content-box;border:3px solid transparent}
+*::-webkit-scrollbar-track{background:transparent}
+a{color:var(--acc2)}
+code,pre,.mono{font-family:var(--mono)}
+
+/* ── 背景氛围：星尘点阵 + 双极光缓慢漂移 ── */
+.bgfx{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.bgfx .grid{
+  position:absolute;inset:0;
+  background-image:radial-gradient(rgba(140,170,230,.10) 1px,transparent 1px);
+  background-size:26px 26px;
+  mask-image:radial-gradient(ellipse 90% 80% at 50% 0%,#000 0%,transparent 78%);
+  -webkit-mask-image:radial-gradient(ellipse 90% 80% at 50% 0%,#000 0%,transparent 78%);
+}
+.bgfx .b1,.bgfx .b2{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5}
+.bgfx .b1{width:52vw;height:52vw;left:-14vw;top:-18vw;background:radial-gradient(circle,rgba(100,240,200,.16),transparent 65%);animation:drift1 44s ease-in-out infinite}
+.bgfx .b2{width:46vw;height:46vw;right:-12vw;bottom:-16vw;background:radial-gradient(circle,rgba(125,211,252,.14),transparent 65%);animation:drift2 52s ease-in-out infinite}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(9vw,7vw) scale(1.18)}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-8vw,-6vw) scale(1.12)}}
+
+/* ── 应用外壳：侧栏 + 主区（单一滚动容器，无跨层 sticky）── */
+#app{position:relative;z-index:1;display:grid;grid-template-columns:238px minmax(0,1fr);height:100vh;height:100dvh}
+#side{
+  display:flex;flex-direction:column;min-height:0;
+  background:rgba(8,12,22,.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-right:1px solid var(--line);
+}
+.brand{display:flex;align-items:center;gap:11px;padding:18px 18px 14px}
+.brand .logo{width:42px;height:42px;flex:none;filter:drop-shadow(0 0 10px rgba(100,240,200,.35))}
+.brand .orbit{transform-origin:22px 22px;animation:orbit 16s linear infinite}
+@keyframes orbit{to{transform:rotate(360deg)}}
+.brand .bt b{display:block;font-size:15px;letter-spacing:.4px;font-weight:700}
+.brand .bt b em{font-style:normal;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand .bt span{display:block;font-family:var(--mono);font-size:10px;color:var(--fg3);letter-spacing:2.5px;margin-top:1px}
+.side-foot{padding:12px 16px 14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:7px}
+.side-foot .stat{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--fg3)}
+.side-foot .stat b{font-family:var(--mono);color:var(--fg);font-size:12.5px;font-weight:600}
+.side-foot .stat .dot{width:6px;height:6px;border-radius:50%;background:var(--acc);box-shadow:0 0 8px rgba(100,240,200,.8);animation:pulse 2.4s ease-in-out infinite;flex:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+#tabs{display:flex;flex-direction:column;gap:3px;padding:6px 10px;overflow:auto;flex:1;min-height:0}
+#tabs button{
+  display:flex;align-items:center;gap:10px;justify-content:flex-start;
+  padding:8px 12px;border-radius:10px;border:1px solid transparent;
+  background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-size:13px;
+  transition:background .18s,color .18s,transform .18s,border-color .18s;
+  position:relative;text-align:left;flex:none;
+}
+#tabs button .ix{font-family:var(--mono);font-size:10px;color:var(--fg3);width:17px;flex:none;transition:color .18s}
+#tabs button:hover{background:rgba(125,211,252,.07);color:var(--fg);transform:translateX(3px)}
+#tabs button.on{
+  background:linear-gradient(90deg,rgba(100,240,200,.13),rgba(125,211,252,.04));
+  color:var(--fg);border-color:rgba(100,240,200,.22);
+}
+#tabs button.on::before{
+  content:"";position:absolute;left:-10px;top:22%;bottom:22%;width:3px;border-radius:3px;
+  background:var(--grad);box-shadow:0 0 12px rgba(100,240,200,.65);
+}
+#tabs button.on .ix{color:var(--acc)}
+
+#main{overflow:auto;min-width:0;display:flex;flex-direction:column;position:relative}
+#busybar{position:fixed;top:0;left:0;right:0;height:2px;z-index:99;overflow:hidden;opacity:0;transition:opacity .3s;pointer-events:none}
+#busybar.on{opacity:1}
+#busybar::after{content:"";position:absolute;top:0;bottom:0;width:34%;background:var(--grad);border-radius:2px;box-shadow:0 0 10px rgba(100,240,200,.8);animation:sweep 1.1s ease-in-out infinite}
+@keyframes sweep{0%{left:-34%}100%{left:100%}}
+
+#topbar{
+  position:sticky;top:0;z-index:30;
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:15px 28px;background:rgba(6,10,19,.74);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);
+}
+#topbar .tt{min-width:0;flex:1}
+#pageTitle{margin:0;font-size:19px;font-weight:700;letter-spacing:.4px;display:flex;align-items:baseline;gap:10px}
+#pageTitle .ix{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--acc);letter-spacing:1px}
+#pageDesc{margin:2px 0 0;color:var(--fg3);font-size:12px;line-height:1.5}
+#topbar .actions{display:flex;gap:9px;flex:none}
+
+#content{padding:22px 28px 72px;max-width:1560px;width:100%;margin:0 auto;flex:1}
+#content section{display:none}
+#content section.on{display:block;animation:secIn .4s cubic-bezier(.22,1,.36,1)}
+@keyframes secIn{from{opacity:0;transform:translateY(10px)}}
+
+/* ── 卡片：玻璃拟态 + 交错入场 ── */
+.card{
+  position:relative;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r);margin-bottom:var(--sp);overflow:hidden;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  box-shadow:var(--shadow);
+  animation:rise .55s cubic-bezier(.22,1,.36,1) both;
+  transition:border-color .25s;
+}
+.card:hover{border-color:var(--line2)}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}}
+section.on .card:nth-child(1){animation-delay:.03s}
+section.on .card:nth-child(2){animation-delay:.09s}
+section.on .card:nth-child(3){animation-delay:.15s}
+section.on .card:nth-child(4){animation-delay:.21s}
+section.on .card:nth-child(5){animation-delay:.27s}
+section.on .card:nth-child(6){animation-delay:.33s}
+section.on .card:nth-child(7){animation-delay:.39s}
+section.on .card:nth-child(8){animation-delay:.45s}
+.card > h2{
+  margin:0;padding:13px 18px;font-size:12.5px;font-weight:600;letter-spacing:.4px;
+  background:rgba(125,211,252,.045);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+}
+.card > h2::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--grad);box-shadow:0 0 8px rgba(100,240,200,.5);flex:none;transform:rotate(45deg)}
+.card > h2 .spacer{flex:1}
+.card > h2 .hint{color:var(--fg3);font-size:11px;font-weight:400;flex:1;min-width:120px;line-height:1.5}
+.card .body{padding:16px 18px}
+.card .body.tight{padding:0}
+.hint{color:var(--fg3);font-size:12px;font-weight:400;line-height:1.55}
+.empty{color:var(--fg3);text-align:center;padding:30px 16px;font-size:13px}
+
+/* ── 仪表数字砖 ── */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:10px}
+.kv{
+  position:relative;background:rgba(12,18,32,.55);border:1px solid var(--line);
+  border-radius:12px;padding:11px 13px;overflow:hidden;
+  transition:border-color .22s,transform .22s;
+}
+.kv::after{content:"";position:absolute;inset:0;border-radius:12px;pointer-events:none;
+  background:linear-gradient(120deg,rgba(100,240,200,.07),transparent 42%);opacity:0;transition:opacity .22s}
+.kv:hover{border-color:rgba(100,240,200,.32);transform:translateY(-2px)}
+.kv:hover::after{opacity:1}
+.kv .k{font-family:var(--mono);font-size:10.5px;color:var(--fg3);letter-spacing:.8px}
+.kv .v{font-family:var(--mono);font-size:19px;font-weight:600;margin-top:4px;word-break:break-all;font-variant-numeric:tabular-nums}
+.kv .v.sm{font-size:12.5px;font-weight:500}
+
+/* ── 按钮 ── */
+button{
+  font:inherit;cursor:pointer;color:var(--fg);
+  background:rgba(125,160,220,.08);border:1px solid var(--line2);
+  padding:6px 14px;border-radius:10px;transition:.16s;
+  display:inline-flex;align-items:center;gap:6px;font-size:12.8px;
+}
+button:hover:not(:disabled){background:rgba(125,211,252,.13);border-color:rgba(125,211,252,.45);transform:translateY(-1px);box-shadow:0 4px 14px rgba(4,10,24,.4)}
+button:active:not(:disabled){transform:translateY(0)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{
+  background:var(--grad);border:none;color:var(--accink);font-weight:700;
+  box-shadow:0 4px 16px rgba(100,240,200,.24);
+}
+button.primary:hover:not(:disabled){box-shadow:0 6px 22px rgba(100,240,200,.38);filter:brightness(1.06)}
+button.danger{color:var(--bad);border-color:rgba(255,107,129,.4);background:rgba(255,107,129,.06)}
+button.danger:hover:not(:disabled){background:rgba(255,107,129,.13);border-color:rgba(255,107,129,.65);box-shadow:0 4px 14px rgba(120,10,30,.35)}
+button.busy{position:relative;color:transparent!important}
+button.busy::after{
+  content:"";position:absolute;inset:0;margin:auto;width:13px;height:13px;
+  border:2px solid rgba(232,237,247,.85);border-top-color:transparent;border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pill{
+  display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;
+  font-size:11.5px;background:rgba(125,211,252,.07);border:1px solid var(--line);color:var(--fg2);
+}
+.pill.on{color:var(--ok);border-color:rgba(110,231,160,.35);background:rgba(110,231,160,.07)}
+.pill.on::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ok);box-shadow:0 0 7px rgba(110,231,160,.9);animation:pulse 2.2s ease-in-out infinite}
+.pill.off{color:var(--fg3)}
+.pill b{color:var(--fg);font-weight:600}
+
+/* ── 表格 ── */
+table{width:100%;border-collapse:collapse;font-size:12.8px}
+th,td{padding:8px 13px;text-align:left;border-bottom:1px solid var(--line)}
+th{
+  color:var(--fg3);font-weight:500;font-size:10.5px;letter-spacing:.8px;
+  font-family:var(--mono);position:sticky;top:0;white-space:nowrap;
+  background:rgba(10,16,30,.97);backdrop-filter:blur(6px);z-index:2;
+}
+tbody tr{transition:background .15s}
+tbody tr:hover{background:rgba(125,211,252,.05)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono)}
+/* 勾选列：记忆条目按条删除时用（窄、居中、不参与文本列宽竞争） */
+th.pick,td.pick{width:34px;padding-left:13px;padding-right:4px;text-align:center}
+th.pick input,td.pick input{margin:0;cursor:pointer;vertical-align:middle}
+.scroll{max-height:440px;overflow:auto}
+.nowrap{white-space:nowrap}
+
+/* ── 角色库表 ──
+ * 默认表格布局会把宽度优先让给文本最长的"资料"列，于是"外号"输入框被挤到
+ * 只剩几十像素（用户反馈"输入框非常短"）。这里把外号列钉死、允许资料列换行。 */
+table.t-char th:nth-child(1),table.t-char td:nth-child(1){white-space:nowrap}
+table.t-char th:nth-child(2),table.t-char td:nth-child(2){white-space:normal;min-width:200px}
+table.t-char th:nth-child(3),table.t-char td:nth-child(3){width:340px;min-width:240px}
+table.t-char th:nth-child(4),table.t-char td:nth-child(4){width:130px;white-space:nowrap}
+
+/* ── 勾选项（会话设置的"额外规则"）──
+ * 这个类以前没定义过：全局 `input{width:100%}` 会把复选框拉满整个单元格，
+ * 看着像一排错位的长条。这里改回 inline + 自然宽度。 */
+.chk{
+  display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  color:var(--fg2);font-size:12px;white-space:nowrap;
+}
+.chk input[type="checkbox"]{width:auto;padding:0;margin:0;accent-color:#6ee7c0}
+
+/* ── 表单 ── */
+label.f{display:block;margin-bottom:11px}
+label.f > span{display:block;color:var(--fg3);font-size:11px;margin-bottom:5px;font-family:var(--mono);letter-spacing:.5px}
+input,select,textarea{
+  font:inherit;color:var(--fg);background:rgba(6,11,22,.72);
+  border:1px solid var(--line2);border-radius:10px;padding:7px 11px;width:100%;
+  transition:border-color .18s,box-shadow .18s;
+}
+input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(100,240,200,.55);box-shadow:0 0 0 3px rgba(100,240,200,.12)}
+select option{background:#0b1220;color:var(--fg)}
+/* 会话下拉用等宽字体 + 服务端给的「实例 · 类型 · 名字」三段，
+   前端再把实例名补到等宽，整列就能对齐（比例字体补空格是对不齐的）。 */
+select.sess{font-family:var(--mono);font-size:12.5px}
+textarea{min-height:90px;resize:vertical;line-height:1.6;font-size:13px}
+.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.row > *{flex:1 1 160px;min-width:0}
+.row > .fix{flex:0 0 auto}
+.hidden{display:none !important}
+
+/* ── 进度条（加载动画由 barGrow 从 0 展开）── */
+.bar{height:6px;border-radius:4px;background:rgba(125,150,200,.14);overflow:hidden;flex:none}
+.bar > i{
+  display:block;height:100%;border-radius:4px;width:var(--w,0%);
+  background:var(--grad);box-shadow:0 0 10px rgba(100,240,200,.4);
+  animation:barGrow .9s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes barGrow{from{width:0}}
+
+/* ── 状态大仪表 ── */
+.meterbox{
+  background:rgba(12,18,32,.55);border:1px solid var(--line);border-radius:12px;
+  padding:12px 14px;transition:border-color .22s;
+}
+.meterbox:hover{border-color:var(--line2)}
+.meterbox .m-top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
+.meterbox .m-name{font-size:12px;color:var(--fg2);font-weight:600}
+.meterbox .m-val{font-family:var(--mono);font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.meterbox .m-hint{margin-top:7px;font-size:10.5px;color:var(--fg3)}
+
+/* ── 代码块 / JSON 高亮 ── */
+pre.out{
+  background:rgba(5,9,18,.78);border:1px solid var(--line);border-radius:10px;
+  padding:13px 15px;max-height:430px;overflow:auto;white-space:pre-wrap;
+  word-break:break-word;font-family:var(--mono);font-size:12px;line-height:1.68;margin:0;
+}
+.jk{color:var(--acc)} .js{color:#c9d6ee} .jn{color:var(--warn)} .jb{color:var(--summary)}
+
+/* ── 标签 ── */
+.tag{
+  display:inline-flex;align-items:center;padding:1px 8px;border-radius:6px;font-size:11px;
+  font-family:var(--mono);background:rgba(125,211,252,.07);
+  border:1px solid var(--line2);color:var(--fg2);margin:2px 4px 2px 0;
+}
+.tag.topic{color:var(--topic);border-color:rgba(100,240,200,.32);background:rgba(100,240,200,.06)}
+.tag.person{color:var(--person);border-color:rgba(110,231,160,.32);background:rgba(110,231,160,.06)}
+.tag.fact{color:var(--fact);border-color:rgba(255,200,87,.32);background:rgba(255,200,87,.06)}
+.tag.summary{color:var(--summary);border-color:rgba(180,140,255,.32);background:rgba(180,140,255,.06)}
+
+.split{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp)}
+@media(max-width:960px){.split{grid-template-columns:1fr}}
+
+/* ── 左右双栏：左竖排统计 / 右内容填满 ── */
+.duo{display:grid;grid-template-columns:216px minmax(0,1fr);gap:14px;align-items:start}
+.duo.wide{grid-template-columns:264px minmax(0,1fr)}
+@media(max-width:960px){.duo,.duo.wide{grid-template-columns:1fr}}
+.vlist{display:flex;flex-direction:column;gap:8px;min-width:0}
+.vlist .kv{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:8px 12px}
+.vlist .kv .k{font-size:11px;flex:none}
+.vlist .kv .v{font-size:14px;margin-top:0;text-align:right;flex:1;min-width:0}
+.vlist .kv .v.sm{font-size:11.5px}
+@media(max-width:960px){
+  .vlist{flex-direction:row;flex-wrap:wrap}
+  .vlist .kv{flex:1 1 150px}
+}
+.fill-h{max-height:calc(100dvh - 236px);min-height:320px}
+.fill-h2{max-height:calc(100dvh - 300px);min-height:280px}
+.useropt b{font-weight:600}
+.useropt i{font-style:normal;color:var(--fg3);font-size:11px;margin-left:6px}
+
+/* ── 主动消息 · 分会话配置内联编辑表 ── */
+#poTable input, #poTable select{
+  font-size:12px;padding:4px 7px;border-radius:8px;width:100%;min-width:0;
+}
+#poTable td{vertical-align:middle}
+#poTable .po-add td{background:rgba(125,211,252,.04)}
+#poTable th{white-space:nowrap}
+
+/* ── 骨架屏 ── */
+.skelbox{padding:18px}
+.skel{
+  height:14px;border-radius:7px;margin:11px 0;
+  background:linear-gradient(100deg,rgba(125,160,220,.08) 32%,rgba(125,200,255,.17) 50%,rgba(125,160,220,.08) 68%);
+  background-size:200% 100%;animation:shimmer 1.25s linear infinite;
+}
+@keyframes shimmer{from{background-position:130% 0}to{background-position:-70% 0}}
+
+/* ── 知识图谱 ── */
+.graphwrap{
+  position:relative;overflow:hidden;border-radius:10px;
+  background:radial-gradient(700px 420px at 50% 40%,rgba(100,240,200,.05),transparent 70%),rgba(5,9,18,.6);
+  height:calc(100dvh - 236px);min-height:380px;
+}
+canvas#gcanvas{display:block;width:100%;height:100%;cursor:grab}
+canvas#gcanvas:active{cursor:grabbing}
+.legend{
+  position:absolute;left:12px;bottom:12px;display:flex;gap:12px;flex-wrap:wrap;
+  background:rgba(10,16,30,.82);backdrop-filter:blur(8px);
+  border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:11.5px;color:var(--fg2);
+}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;box-shadow:0 0 6px currentColor}
+
+/* ── Toast（弹簧滑入）── */
+#toast{position:fixed;right:18px;bottom:18px;z-index:99;display:flex;flex-direction:column;gap:9px;align-items:flex-end}
+.toast{
+  background:rgba(14,21,38,.92);backdrop-filter:blur(10px);
+  border:1px solid var(--line2);border-left:3px solid var(--acc);
+  border-radius:12px;padding:10px 15px;font-size:13px;max-width:430px;
+  box-shadow:0 10px 30px rgba(2,6,18,.6);
+  animation:toastIn .45s cubic-bezier(.34,1.56,.64,1) both;
+  display:flex;align-items:center;gap:8px;
+}
+.toast::before{content:"✓";color:var(--acc);font-weight:700}
+.toast.bad{border-left-color:var(--bad)}
+.toast.bad::before{content:"!";color:var(--bad)}
+.toast.bye{opacity:0;transform:translateX(26px);transition:.25s ease}
+@keyframes toastIn{from{opacity:0;transform:translateX(34px) scale(.94)}}
+
+/* ── 页内确认/输入弹窗 ──
+   插件页 iframe 的 sandbox 没有 allow-modals，原生 confirm()/prompt()
+   会被浏览器静默拦成 false/null（按钮点了没反应），必须自绘。 */
+.confirm-mask{
+  position:fixed;inset:0;z-index:120;display:flex;align-items:center;justify-content:center;
+  background:rgba(3,6,14,.66);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+  animation:maskIn .18s ease both;
+}
+@keyframes maskIn{from{opacity:0}}
+.confirm-box{
+  width:min(440px,calc(100vw - 48px));
+  background:rgba(16,23,40,.97);border:1px solid var(--line2);border-radius:14px;
+  box-shadow:var(--shadow);padding:18px 20px 16px;color:var(--fg);
+  animation:boxIn .22s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes boxIn{from{opacity:0;transform:translateY(10px) scale(.97)}}
+.confirm-box .cm-msg{font-size:13.5px;line-height:1.65;color:var(--fg);margin:2px 0 16px;white-space:pre-wrap}
+.confirm-box .cm-input{
+  font:inherit;color:var(--fg);background:rgba(6,11,22,.8);
+  border:1px solid var(--line2);border-radius:10px;padding:8px 12px;width:100%;margin:4px 0 16px;
+}
+.confirm-box .cm-input:focus{outline:none;border-color:rgba(100,240,200,.55);box-shadow:0 0 0 3px rgba(100,240,200,.12)}
+.confirm-box.wide{width:min(720px,calc(100vw - 48px))}
+.confirm-box textarea.cm-input{min-height:220px;resize:vertical;line-height:1.6;font-size:12.5px}
+.confirm-box .cm-actions{display:flex;justify-content:flex-end;gap:10px}
+
+/* ── 窄屏：侧栏折为顶部横向导航（不再依赖 sticky 偏移）── */
+@media(max-width:900px){
+  #app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  #side{flex-direction:row;align-items:center;border-right:none;border-bottom:1px solid var(--line);overflow:hidden}
+  .brand{padding:10px 14px}
+  .brand .logo{width:32px;height:32px}
+  .brand .bt span{display:none}
+  #tabs{flex-direction:row;overflow-x:auto;overflow-y:hidden;padding:6px 8px;gap:6px}
+  #tabs button{padding:7px 11px;flex:none}
+  #tabs button .ix{display:none}
+  #tabs button.on::before{left:10%;right:10%;top:auto;bottom:-1px;width:auto;height:2.5px}
+  .side-foot{display:none}
+  #content{padding:16px 14px 60px}
+  #topbar{padding:12px 14px}
+  #pageTitle{font-size:16px}
+}
+/* ── 手机竖屏（vivo S20：2800×1260 @ 20:9，DPR≈3，CSS 视口≈420px 宽）──
+ * 设计原则：单列堆叠、全宽触控目标、表格容器内横向滚动、
+ * 取消嵌套滚动（页面整体滚）、收窄滚动条、适配底部手势条 safe-area。 */
+@media(max-width:640px){
+  :root{--r:12px;--r2:8px;--sp:12px}
+  #tabs button{min-height:42px;padding:9px 12px;font-size:13.5px}
+  #topbar{gap:10px;padding:11px 12px}
+  #topbar .actions{width:100%;display:flex;gap:8px}
+  #topbar .actions button{flex:1 1 0;justify-content:center;padding:9px 8px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #pageTitle{font-size:16px}
+  #pageDesc{font-size:11.5px}
+  #content{padding:14px 12px calc(26px + env(safe-area-inset-bottom))}
+  .card > h2{padding:11px 13px}
+  .card > h2 .hint{flex:1 1 100%;min-width:0;width:100%}
+  .card .body{padding:13px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px}
+  .kv{padding:9px 11px}
+  .kv .v{font-size:17px}
+  .row{gap:8px}
+  .row > *{flex:1 1 100%}
+  .row > .fix{flex:0 0 auto}
+  .vlist{flex-direction:column}
+  .vlist .kv{flex:1 1 100%}
+  /* 特权覆盖表单：固定宽输入框按可用宽度铺满 */
+  .pr-scope,.pr-qids{width:100% !important;max-width:100%}
+  .pr-add{flex-direction:column;align-items:stretch}
+  .pr-add button{width:100%;justify-content:center}
+  /* 表格：容器内横向滚动、细单元格、去掉 sticky 表头（页面整体滚时避免错位） */
+  .scroll{max-height:none;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+  th,td{padding:7px 9px;font-size:12.3px}
+  th{position:static}
+  table.t-char th:nth-child(2),table.t-char td:nth-child(2){min-width:140px}
+  table.t-char th:nth-child(3),table.t-char td:nth-child(3){width:auto;min-width:200px}
+  /* 直接铺在 body / 双栏里的零散表格：块级 + 横向滚动兜底 */
+  .body > table,.split > table,.duo > table,#gSearchOut table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .fill-h,.fill-h2{max-height:none;min-height:0}
+  .graphwrap{height:62dvh;min-height:300px}
+  .legend{bottom:8px;left:8px;right:8px;font-size:10.5px;padding:5px 9px}
+  pre.out{max-height:300px;padding:11px 12px;font-size:11.5px}
+  #toast{left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));align-items:stretch}
+  .toast{max-width:none;width:100%;font-size:12.5px;padding:10px 13px}
+  .confirm-box{width:calc(100vw - 30px);padding:16px 16px 14px}
+  .meterbox .m-val{font-size:18px}
+  /* 手机滚动条收窄 */
+  ::-webkit-scrollbar{width:4px;height:4px}
+  input,select,textarea{padding:8px 11px}
+}
+@media(max-width:400px){
+  #pageTitle{font-size:15px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+
+<div class="bgfx" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="grid"></i></div>
+
+<div id="app">
+  <aside id="side">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+        <circle cx="22" cy="22" r="19" stroke="rgba(125,211,252,.28)" stroke-width="1"/>
+        <g class="orbit">
+          <ellipse cx="22" cy="22" rx="19" ry="7.5" stroke="rgba(100,240,200,.4)" stroke-width="1" transform="rotate(-24 22 22)"/>
+          <circle cx="35.5" cy="13.5" r="2.1" fill="#64f0c8"/>
+        </g>
+        <circle cx="22" cy="22" r="6" fill="url(#lg)"/>
+        <defs>
+          <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#64f0c8"/><stop offset="1" stop-color="#7dd3fc"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="bt"><b>ChatCore <em>Neo</em></b><span>OBSERVATORY</span></div>
+    </div>
+    <nav id="tabs"></nav>
+    <div class="side-foot">
+      <div class="stat" id="pPlug"><i class="dot"></i><b>—</b><span>次注入</span></div>
+      <div class="stat" id="pMem"><i class="dot"></i><b>—</b><span>条记忆</span></div>
+      <div class="stat" id="pGraph"><i class="dot"></i><b>—</b><span>图谱节点</span></div>
+    </div>
+  </aside>
+
+  <div id="main">
+    <div id="busybar"></div>
+    <header id="topbar">
+      <div class="tt">
+        <h1 id="pageTitle"><span class="ix">01</span>总览</h1>
+        <p id="pageDesc"></p>
+      </div>
+      <div class="actions">
+        <button id="btnReload" title="重新从磁盘读取人格文件（改过 persona.yaml 后用）">重载人格数据</button>
+        <button class="primary" id="btnRefresh" title="重新拉取当前页签的数据">刷新本页</button>
+      </div>
+    </header>
+    <main id="content">
+      <section id="tab-overview"></section>
+      <section id="tab-personas"></section>
+<section id="tab-persona-pool"></section>
+      <section id="tab-characters"></section>
+      <section id="tab-state"></section>
+      <section id="tab-impression"></section>
+      <section id="tab-memory"></section>
+      <section id="tab-graph"></section>
+      <section id="tab-attention"></section>
+      <section id="tab-interactions"></section>
+      <section id="tab-proactive"></section>
+      <section id="tab-session-params"></section>
+      <section id="tab-groups"></section>
+      <section id="tab-preview"></section>
+      <section id="tab-doctor"></section>
+      <section id="tab-config"></section>
+      <section id="tab-raw"></section>
+    </main>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let SESSIONS = null;
+let UNAMES = {};   // uid → 昵称（/sessions 返回）
+let SLABELS = {};  // umo → 友好会话标签（实例|群聊/私聊|QQ号|昵称）
+let CUR_PERSONA = "";
+let GRAPH = null;
+
+async function ensureSessions(){
+  if (!SESSIONS) {
+    SESSIONS = await get("/sessions");
+    UNAMES = SESSIONS.user_names || {};
+    SLABELS = SESSIONS.labels || {};
+  }
+  computeInstWidth();   // 会话下拉的实例列宽（补空格做对齐）
+  return SESSIONS;
+}
+/* 会话展示：优先用服务端算好的友好标签，兜底回退 umo 原文 */
+function sessLabel(umo){
+  const l = SLABELS[umo];
+  return l ? l : String(umo || "—");
+}
+/* 下拉用的会话文案：`实例 · 类型 · 名字`，实例名补到最长那个，整列对齐。
+ * 补的是 nbsp —— 普通空格在 <option> 里会被 HTML 折叠掉。 */
+let INST_W = 0;
+/* 最长实例名 —— 在 ensureSessions() 里统一算，保证任何入口都拿得到 */
+function computeInstWidth(){
+  INST_W = ((SESSIONS && SESSIONS.sessions) || []).reduce(function(m, s){
+    return Math.max(m, String((s && s.instance) || "").length);
+  }, 0);
+}
+function paddedInstance(s){
+  const nm = String((s && s.instance) || "");
+  const pad = Math.max(0, (INST_W || nm.length) - nm.length);
+  return nm + "\u00a0".repeat(pad);
+}
+function sessOptionText(s){
+  if (!s || !s.kind) return sessLabel(s && s.umo);
+  return paddedInstance(s) + " · " + s.kind + " · " + String(s.name || "");
+}
+function sessOptions(){
+  return ((SESSIONS && SESSIONS.sessions) || []).map(function(s){
+    return '<option value="' + esc(s.umo) + '" title="' + esc(s.umo) + '">'
+      + esc(sessOptionText(s)) + '</option>';
+  }).join("");
+}
+/* 文本里的「成员 QQ」→「昵称（QQ）」 */
+function dispName(uid, nm){
+  // 平台偶尔把 QQ 号当昵称返回 —— 那不是昵称，显示成「123（123）」很蠢
+  const s = String(nm == null ? "" : nm).trim();
+  return s === String(uid) ? "" : s;
+}
+function userLabel(uid, names){
+  const nm = dispName(uid, (names || {})[uid] || "");
+  return uid + (nm ? "（" + nm + "）" : "");
+}
+
+/* 传输层：必须走 AstrBot 的插件页桥（window.AstrBotPluginPage）。
+ * 插件页以 iframe 加载，鉴权 token 在父窗口，裸请求会在网络层失败。
+ * 桥脚本由服务端注入在 body 结束标签之前（晚于本页脚本），故需轮询等待。
+ * 桥的约定：endpoint 是相对路径、不能含问号；查询参数走第二个参数。 */
+function withTimeout(promise, ms, msg){
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg)), ms);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); });
+  });
+}
+function bridgeReady(timeoutMs){
+  return new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function poll(){
+      const B = window.AstrBotPluginPage;
+      if (B && typeof B.apiGet === "function") {
+        withTimeout(B.ready(), 1500, "ready-timeout")
+          .catch(() => {}).then(() => resolve(B));
+        return;
+      }
+      if (Date.now() - t0 > (timeoutMs || 12000)) {
+        reject(new Error("插件页桥未加载：请从 AstrBot WebUI 的插件页入口打开本页"));
+        return;
+      }
+      setTimeout(poll, 50);
+    })();
+  });
+}
+
+/* 顶部细进度条：任意请求进行中时点亮 */
+let BQ = 0;
+function busyTick(d){
+  BQ = Math.max(0, BQ + d);
+  const bar = document.getElementById("busybar");
+  if (bar) bar.classList.toggle("on", BQ > 0);
+}
+async function call(path, opts){
+  busyTick(1);
+  try {
+    const B = await bridgeReady();
+    const p = String(path || "").replace(/^\/+/, "");
+    const qi = p.indexOf("?");
+    const ep = qi >= 0 ? p.slice(0, qi) : p;
+    const params = {};
+    if (qi >= 0) {
+      new URLSearchParams(p.slice(qi + 1)).forEach((v, k) => { params[k] = v; });
+    }
+    const method = String((opts && opts.method) || "GET").toUpperCase();
+    let out;
+    if (method === "POST") {
+      let body = {};
+      if (opts && opts.body) {
+        try { body = JSON.parse(opts.body); } catch (e) { body = {}; }
+      }
+      out = await withTimeout(B.apiPost(ep, body), 60000, "请求超时：父窗口没有响应");
+    } else {
+      out = await withTimeout(B.apiGet(ep, params), 60000, "请求超时：父窗口没有响应");
+    }
+    if (out && typeof out === "object" && out.ok === false) {
+      throw new Error(out.error || out.message || "未知错误");
+    }
+    return out;
+  } finally { busyTick(-1); }
+}
+const get  = (p) => call(p);
+const post = (p, body) => call(p, {method:"POST", body: JSON.stringify(body||{})});
+
+function toast(msg, bad){
+  const d = document.createElement("div");
+  d.className = "toast" + (bad ? " bad" : "");
+  d.textContent = msg;
+  document.getElementById("toast").appendChild(d);
+  setTimeout(function(){
+    d.classList.add("bye");
+    setTimeout(function(){ d.remove(); }, 260);
+  }, bad ? 6000 : 3200);
+}
+/* 页内二次确认：插件页 iframe 沙箱没有 allow-modals，原生 confirm()
+   会被浏览器静默拦成 false（表现为点了没反应），所以自绘弹窗。
+   返回 Promise<boolean>；Esc / 点遮罩 / 取消 = false，Enter / 确定 = true。
+   破坏性操作为防误回车，默认焦点在「取消」。 */
+function askConfirm(msg, opt){
+  return new Promise(function(resolve){
+    opt = opt || {};
+    const mask = document.createElement("div");
+    mask.className = "confirm-mask";
+    mask.innerHTML = '<div class="confirm-box" role="alertdialog" aria-modal="true">'
+      + '<div class="cm-msg">' + esc(msg) + '</div>'
+      + '<div class="cm-actions">'
+      + '<button class="cm-cancel" title="取消操作（Esc）">取消</button>'
+      + '<button class="danger cm-ok" title="确认并继续">' + esc(opt.ok || "确定") + '</button>'
+      + '</div></div>';
+    const box = mask.querySelector(".confirm-box");
+    const ok = mask.querySelector(".cm-ok");
+    const cancel = mask.querySelector(".cm-cancel");
+    let done = false;
+    function close(val){
+      if (done) return; done = true;
+      document.removeEventListener("keydown", onKey);
+      if (mask.parentNode) mask.parentNode.removeChild(mask);
+      resolve(val);
+    }
+    function onKey(e){
+      if (e.key === "Escape") close(false);
+      else if (e.key === "Enter") { e.preventDefault(); close(true); }
+    }
+    ok.addEventListener("click", function(){ close(true); });
+    cancel.addEventListener("click", function(){ close(false); });
+    mask.addEventListener("click", function(e){ if (e.target === mask) close(false); });
+    box.addEventListener("click", function(e){ e.stopPropagation(); });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(mask);
+    cancel.focus();
+  });
+}
+/* 页内输入框（替代原生 prompt，同样被沙箱拦截返回 null）。
+   `opt.multiline` = true 时用多行文本框（记忆正文这类长文本用，回车换行、
+   Ctrl/Cmd+Enter 才提交）。 */
+function askPrompt(msg, def, opt){
+  opt = opt || {};
+  return new Promise(function(resolve){
+    const mask = document.createElement("div");
+    mask.className = "confirm-mask";
+    mask.innerHTML = '<div class="confirm-box' + (opt.multiline ? ' wide' : '')
+      + '" role="dialog" aria-modal="true">'
+      + '<div class="cm-msg">' + esc(msg) + '</div>'
+      + (opt.multiline
+          ? '<textarea class="cm-input" rows="10">' + esc(def || "") + '</textarea>'
+          : '<input class="cm-input" type="text" value="' + esc(def || "") + '">')
+      + '<div class="cm-actions">'
+      + '<button class="cm-cancel" title="取消操作（Esc）">取消</button>'
+      + '<button class="primary cm-ok" title="确认并继续（'
+      + (opt.multiline ? "Ctrl+Enter" : "Enter") + '）">' + esc(opt.ok || "确定")
+      + '</button>'
+      + '</div></div>';
+    const box = mask.querySelector(".confirm-box");
+    const inp = mask.querySelector(".cm-input");
+    const ok = mask.querySelector(".cm-ok");
+    const cancel = mask.querySelector(".cm-cancel");
+    let done = false;
+    function close(val){
+      if (done) return; done = true;
+      document.removeEventListener("keydown", onKey);
+      if (mask.parentNode) mask.parentNode.removeChild(mask);
+      resolve(val);
+    }
+    function onKey(e){
+      if (e.key === "Escape") { close(null); return; }
+      if (e.key !== "Enter") return;
+      // 多行框里回车是换行，只有 Ctrl/Cmd+Enter 才提交
+      if (opt.multiline && !(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault(); close(inp.value);
+    }
+    ok.addEventListener("click", function(){ close(inp.value); });
+    cancel.addEventListener("click", function(){ close(null); });
+    mask.addEventListener("click", function(e){ if (e.target === mask) close(null); });
+    box.addEventListener("click", function(e){ e.stopPropagation(); });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(mask);
+    inp.focus();
+    if (opt.multiline) inp.setSelectionRange(inp.value.length, inp.value.length);
+    else inp.select();
+  });
+}
+function esc(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
+}
+function num(v, d){ return (v === null || v === undefined || v === "") ? (d===undefined?"—":d) : v; }
+function bytes(n){
+  n = Number(n) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n/1024).toFixed(1) + " KB";
+  return (n/1048576).toFixed(2) + " MB";
+}
+function ago(ts){
+  if (!ts) return "—";
+  const d = Math.max(0, Date.now()/1000 - Number(ts));
+  if (d < 60) return Math.floor(d) + " 秒前";
+  if (d < 3600) return Math.floor(d/60) + " 分钟前";
+  if (d < 86400) return Math.floor(d/3600) + " 小时前";
+  return Math.floor(d/86400) + " 天前";
+}
+function kv(k, v, cls){
+  const s = (v === null || v === undefined || v === "") ? "—" : String(v);
+  const isNum = /^[0-9]+(\.[0-9]+)?$/.test(s);
+  return '<div class="kv"><div class="k">' + esc(k) + '</div>'
+       + '<div class="v ' + (cls||"") + '"' + (isNum ? ' data-count="' + s + '"' : "")
+       + '>' + esc(s) + '</div></div>';
+}
+function kvGrid(items){
+  return '<div class="grid">' + items.map(function(a){ return kv(a[0], a[1], a[2]); }).join("") + '</div>';
+}
+/* 竖排统计（左右布局的左侧栏） */
+function kvCol(items){
+  return '<div class="vlist">' + items.map(function(a){ return kv(a[0], a[1], a[2]); }).join("") + '</div>';
+}
+/* 对象 → 友好键值渲染（替代裸 JSON）：
+ * 标量键渲染成 kv 砖；数组渲染成标签；嵌套对象递归成小节。 */
+function kvObj(obj){
+  const o = obj || {};
+  const scalar = {}, array = {}, nested = {};
+  Object.keys(o).forEach(function(k){
+    const v = o[k];
+    if (v !== null && typeof v === "object") {
+      (Array.isArray(v) ? array : nested)[k] = v;
+    } else { scalar[k] = v; }
+  });
+  let html = "";
+  const sk = Object.keys(scalar);
+  if (sk.length) html += '<div class="grid">' + sk.map(function(k){
+    return kv(k, scalar[k]); }).join("") + '</div>';
+  Object.keys(array).forEach(function(k){
+    const v = array[k];
+    html += '<div class="hint" style="margin:9px 0 4px">' + esc(k)
+      + '（' + v.length + '）</div><div>'
+      + (v.length ? v.map(function(x){
+          return '<span class="tag">' + esc(typeof x === "object"
+            ? JSON.stringify(x) : x) + '</span>'; }).join("")
+        : '<span class="hint">（空）</span>')
+      + '</div>';
+  });
+  Object.keys(nested).forEach(function(k){
+    html += '<div class="hint" style="margin:9px 0 4px">' + esc(k) + '</div>'
+      + kvObj(nested[k]);
+  });
+  return html || '<div class="empty">（无数据）</div>';
+}
+/* 数字滚动动画 */
+function countUpAll(root){
+  (root || document).querySelectorAll("[data-count]").forEach(function(el){
+    const raw = el.getAttribute("data-count");
+    const t = parseFloat(raw);
+    if (isNaN(t)) return;
+    const dec = raw.indexOf(".") >= 0 ? (raw.split(".")[1] || "").length : 0;
+    const t0 = performance.now(), dur = 720;
+    function step(now){
+      const p = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - p, 3);
+      el.textContent = (t * e).toFixed(dec);
+      if (p < 1) requestAnimationFrame(step);
+      else el.textContent = t.toFixed(dec);
+    }
+    requestAnimationFrame(step);
+  });
+}
+function showSkeleton(el){
+  el.innerHTML = '<div class="card"><div class="body skelbox">'
+    + '<div class="skel" style="width:36%"></div>'
+    + '<div class="skel" style="width:88%"></div>'
+    + '<div class="skel" style="width:66%"></div>'
+    + '<div class="skel" style="width:74%"></div>'
+    + '</div></div>';
+}
+async function busy(btn, fn){
+  if (!btn || btn.disabled) return;
+  btn.disabled = true; btn.classList.add("busy");
+  try { await fn(); }
+  catch(e){ toast(e.message || String(e), true); }
+  finally { btn.disabled = false; btn.classList.remove("busy"); }
+}
+function on(id, ev, fn){
+  const el = document.getElementById(id);
+  if (el) el.addEventListener(ev, fn);
+}
+function val(id){ const e = document.getElementById(id); return e ? e.value : ""; }
+
+/* JSON 语法高亮渲染 */
+function jhtml(v, ind){
+  const sp = "  ";
+  const pad = new Array((ind || 0) + 1).join(sp);
+  if (v === null) return '<span class="jb">null</span>';
+  if (typeof v === "boolean") return '<span class="jb">' + v + '</span>';
+  if (typeof v === "number") return '<span class="jn">' + v + '</span>';
+  if (typeof v === "string") return '<span class="js">"' + esc(v) + '"</span>';
+  if (Array.isArray(v)) {
+    if (!v.length) return "[]";
+    return "[\n" + v.map(function(x){
+      return pad + sp + jhtml(x, (ind || 0) + 1);
+    }).join(",\n") + "\n" + pad + "]";
+  }
+  const keys = Object.keys(v);
+  if (!keys.length) return "{}";
+  return "{\n" + keys.map(function(k){
+    return pad + sp + '<span class="jk">"' + esc(k) + '"</span>: ' + jhtml(v[k], (ind || 0) + 1);
+  }).join(",\n") + "\n" + pad + "}";
+}
+function jpre(obj){
+  return '<pre class="out">' + jhtml(obj, 0) + '</pre>';
+}
+
+const TABS = [
+  ["overview",     "总览",     "整体指标与各子系统开关状态"],
+  ["personas",     "人格",     "15 个人格的章节结构、文件与注入策略"],
+  ["persona-pool", "人格分配", "把人格拖到实例：决定哪个机器人号能用哪些人格"],
+  ["characters",   "角色",     "消息里提到角色名时注入的角色资料；外号库在这里维护"],
+  ["state",        "状态",     "好感度/情绪/淫乱度/恶堕值，以及状态日志"],
+  ["impression",   "印象",     "按用户自动总结的印象，可人工覆写"],
+  ["memory",       "记忆",     "固化后的记忆条目，以及双路召回实测"],
+  ["graph",        "知识图谱", "实体与关系网络，点节点看邻居与关联条目"],
+  ["attention",    "注意力",   "每个会话当前的接话概率拆解与判定统计"],
+  ["interactions", "交互",     "分段子代理提示词编辑/试跑、戳一戳/连发/撤回/TTS"],
+  ["proactive",    "主动消息", "调度器状态、下次候选与免打扰时段"],
+  ["session-params", "会话设置", "发言模式/NSFW/特权用户（分会话）按会话配置"],
+  ["groups",       "记忆组",   "跨会话共享记忆：把多个会话归到一组"],
+  ["preview",      "装配预览", "某人格在群聊/私聊下实际注入的内容与体积"],
+  ["doctor",       "自检",     "人格数据完整性检查"],
+  ["config",       "配置",     "插件全部配置项：编辑保存后立即生效"],
+  ["raw",          "原始数据", "各接口的原始 JSON，排障用"],
+];
+let ACTIVE = "overview";
+const LOADERS = {};
+
+function pad2(n){ return (n < 10 ? "0" : "") + n; }
+
+function buildTabs(){
+  const nav = document.getElementById("tabs");
+  nav.innerHTML = TABS.map(function(t, i){
+    return '<button data-tab="' + t[0] + '" title="' + esc(t[2]) + '">'
+      + '<span class="ix">' + pad2(i + 1) + '</span>' + esc(t[1]) + '</button>';
+  }).join("");
+  nav.querySelectorAll("button").forEach(function(b){
+    b.addEventListener("click", function(){ switchTab(b.dataset.tab); });
+  });
+}
+function switchTab(id){
+  ACTIVE = id;
+  document.querySelectorAll("#tabs button").forEach(function(b){
+    b.classList.toggle("on", b.dataset.tab === id);
+  });
+  document.querySelectorAll("#content section").forEach(function(s){
+    s.classList.toggle("on", s.id === "tab-" + id);
+  });
+  const i = TABS.findIndex(function(x){ return x[0] === id; });
+  const t = TABS[i];
+  if (t) {
+    document.getElementById("pageTitle").innerHTML =
+      '<span class="ix">' + pad2(i + 1) + '</span>' + esc(t[1]);
+    document.getElementById("pageDesc").textContent = t[2];
+  }
+  const btn = document.getElementById("btnRefresh");
+  btn.title = t ? ("重新拉取「" + t[1] + "」的数据：" + t[2]) : "刷新";
+  refresh();
+}
+async function refresh(){
+  const el = document.getElementById("tab-" + ACTIVE);
+  if (!LOADERS[ACTIVE]) return;
+  // 缺容器时**必须报出来**：以前这里直接往下走，getElementById 返回 null，
+  // showSkeleton(null) 抛 TypeError，catch 里又对 null 赋值再抛一次 ——
+  // 结果是整页静默空白，用户只看到"这个页签坏了"（会话设置就这样空白过）。
+  if (!el) {
+    toast("页签「" + ACTIVE + "」缺少 <section id=\"tab-" + ACTIVE + "\"> 容器", true);
+    return;
+  }
+  showSkeleton(el);
+  try {
+    await LOADERS[ACTIVE](el);
+    countUpAll(el);
+  }
+  catch(e){
+    el.innerHTML = '<div class="card"><div class="body">'
+      + '<div class="empty">加载失败：' + esc(e.message) + '</div></div></div>';
+    toast("加载失败：" + e.message, true);
+  }
+}
+
+/* ── 总览 ── */
+LOADERS.overview = async function(el){
+  const s = await get("/stats");
+  setHeaderPills(s);
+  const p = s.plugin || {}, m = s.memory || {}, g = m.graph || {};
+  // 残留体检：会话/用户残留来自 /sessions，主动消息脏键来自 /proactive
+  await ensureSessions();
+  let stalePro = [];
+  try {
+    const pr = await get("/proactive");
+    if (pr && Array.isArray(pr.stale_proactive)) stalePro = pr.stale_proactive;
+  } catch (e) {}
+  const staleSess = (SESSIONS.stale_sessions || []);
+  const staleUsr = (SESSIONS.stale_users || []);
+  const totalStale = staleSess.length + staleUsr.length + stalePro.length;
+  const staleHtml = totalStale
+    ? '<div class="card" style="border-color:rgba(255,200,87,.4)"><h2>残留数据'
+      + '<span class="hint">旧数据残留：还原不出「实例|类型|ID」的目录、'
+      + '已在 AstrBot 删除的会话（孤儿会话 —— 插件目录还在但 AstrBot 侧'
+      + '已没有它的对话记录）、以及主动消息账本里已不再是真会话的键'
+      + '（测试脚本造的假会话、被删掉的旧会话）。'
+      + '都不会出现在任何下拉或活跃度表里，可一键清理（不可撤销）</span>'
+      + '<span class="spacer"></span>'
+      + '<button class="danger" id="btnPrune" title="删除下列全部残留数据（不可撤销）">'
+      + '清理全部残留（' + totalStale + '）</button></h2><div class="body">'
+      + (staleSess.length
+          ? '<div class="hint" style="margin:2px 0 4px">残留会话（' + staleSess.length + '）</div>'
+            + staleSess.map(function(x){
+                return '<span class="tag fact" style="font-size:11px" title="' + esc(x.dir) + '">'
+                  + esc(x.label || x.umo || x.dir) + '</span>';
+              }).join("")
+          : "")
+      + (staleUsr.length
+          ? '<div class="hint" style="margin:8px 0 4px">残留用户（' + staleUsr.length + '）</div>'
+            + staleUsr.map(function(u){
+                return '<span class="tag fact" style="font-size:11px">' + esc(u.uid) + '</span>';
+              }).join("")
+          : "")
+      + (stalePro.length
+          ? '<div class="hint" style="margin:8px 0 4px">主动消息脏键（' + stalePro.length + '）</div>'
+            + stalePro.map(function(u){
+                return '<span class="tag fact mono" style="font-size:11px">' + esc(u) + '</span>';
+              }).join("")
+          : "")
+      + '</div></div>'
+    : "";
+  el.innerHTML =
+    '<div class="card"><h2>运行指标</h2><div class="body">'
+    + kvGrid([
+        ["人格", s.personas],
+        ["世界", (s.worlds||{}).worlds],
+        ["世界观文件", (s.worlds||{}).files],
+        ["注入次数", p.injected],
+        ["状态更新", p.state_updates],
+        ["剥离工具结果", p.stripped],
+        ["错误", p.errors],
+        ["已固化记忆", m.consolidated],
+        ["图谱节点", g.nodes],
+        ["图谱边", g.edges],
+        ["图谱条目", g.entries],
+        ["降级固化", m.degraded],
+      ])
+    + (s.last_error
+        ? '<pre class="out" style="margin-top:12px;border-color:rgba(255,107,129,.4)">最近错误：'
+          + esc(s.last_error) + '</pre>'
+        : "")
+    + '</div></div>'
+    + staleHtml
+    + '<div class="card"><h2>子系统状态'
+    + '<span class="hint">「状态」取的是**实现里真正用来开门的那一个值**'
+    + '（子系统对象自报的开关，或与主流程同源的配置键），不是顺手挑的计数 —— '
+    + '所以功能开着但没有产出数据时也显示「启用」。'
+    + '第三列写明该开关的来源。具体数值见对应页签'
+    + '</span></h2>'
+    + '<div class="body tight"><div class="scroll"><table>'
+    + '<thead><tr><th>子系统</th><th>状态</th><th>开关来源 / 运行情况</th></tr></thead><tbody>'
+    + subsystemRows(s) + '</tbody></table></div></div></div>';
+  const bx = document.getElementById("btnPrune");
+  if (bx) bx.addEventListener("click", function(e){
+    busy(e.target, async function(){
+      if (!(await askConfirm("确定删除全部 " + totalStale + " 条残留数据？此操作不可撤销。"))) return;
+      const r = await post("/prune", {
+        sessions: staleSess.map(function(x){ return x.umo && x.umo !== x.dir ? x.umo : x.dir; }),
+        users: staleUsr.map(function(u){ return u.uid; }),
+        proactive: stalePro,
+      });
+      const parts = [];
+      if (r.sessions && r.sessions.length) parts.push("会话 " + r.sessions.length);
+      if (r.users && r.users.length) parts.push("用户 " + r.users.length);
+      if (r.proactive && r.proactive.length) parts.push("主动键 " + r.proactive.length);
+      if (r.skipped_linked && r.skipped_linked.length)
+        parts.push("跳过（归组）" + r.skipped_linked.length);
+      toast("清理完成：" + (parts.join("、") || "无"));
+      SESSIONS = null; UNAMES = {}; SLABELS = {};
+      await refresh();
+    });
+  });
+};
+
+function subsystemRows(s){
+  // 「启用/关闭」必须来自 `/stats.features` —— 后端按**实现里真正用来开门的
+  // 那一个值**逐条算好（子系统对象自报的 enabled 或与之同源的配置键）。
+  // 旧写法是"从 /stats 里顺手挑一个字段当布尔"，挑到计数就完了：
+  // `用户印象` 读 updated、`长期记忆` 读 atoms、`知识图谱` 读 nodes，
+  // 于是功能开着但只要还没有产出数据就显示"关闭"。
+  const rows = Array.isArray(s.features) ? s.features : [];
+  if (!rows.length) {
+    return '<tr><td colspan="3" class="empty">'
+      + '后端未返回功能开关表（插件可能是旧版本，重载插件即可）</td></tr>';
+  }
+  return rows.map(function(r){
+    const cls = r.enabled ? "on" : "off";
+    const txt = r.enabled ? "启用" : "关闭";
+    return '<tr><td>' + esc(r.name) + '</td>'
+         + '<td><span class="pill ' + cls + '">' + txt + '</span></td>'
+         + '<td class="hint mono" style="font-size:11px">' + esc(r.gate || "")
+         + (r.detail ? ' <span style="font-family:inherit">· '
+             + esc(r.detail) + '</span>' : "")
+         + '</td></tr>';
+  }).join("");
+}
+
+function setHeaderPills(s){
+  const p = s.plugin || {}, m = s.memory || {}, g = m.graph || {};
+  document.getElementById("pPlug").innerHTML =
+    '<i class="dot"></i><b>' + esc(num(p.injected,0)) + '</b><span>次注入</span>';
+  document.getElementById("pMem").innerHTML =
+    '<i class="dot"></i><b>' + esc(num(m.consolidated,0)) + '</b><span>条记忆</span>';
+  document.getElementById("pGraph").innerHTML =
+    '<i class="dot"></i><b>' + esc(num(g.nodes,0)) + '</b><span>图谱节点</span>';
+}
+
+/* ── 人格 ── */
+LOADERS.personas = async function(el){
+  const d = await get("/personas");
+  el.innerHTML =
+    '<div class="card"><h2>人格列表'
+    + '<span class="hint">点「查看」看章节结构、文件体积与每个章节的注入策略</span></h2>'
+    + '<div class="body tight"><div class="scroll fill-h2"><table>'
+    + '<thead><tr><th>id</th><th>显示名</th><th>世界观</th><th>角色</th>'
+    + '<th class="num">章节</th><th>分层</th><th>别名</th><th></th></tr></thead><tbody>'
+    + d.personas.map(function(p){
+        const al = (p.aliases || []);
+        return '<tr><td class="mono" style="font-size:12px">' + esc(p.id) + '</td>'
+          + '<td><b>' + esc(p.display_name) + '</b></td>'
+          + '<td>' + esc(num(p.world)) + '</td>'
+          + '<td>' + esc(num(p.world_role)) + '</td>'
+          + '<td class="num">' + esc(p.sections) + '</td>'
+          + '<td>' + p.tiers.map(function(t){ return '<span class="tag">' + esc(t) + '</span>'; }).join("") + '</td>'
+          + '<td class="hint">' + esc(al.slice(0,3).join("、")) + (al.length > 3 ? "…" : "") + '</td>'
+          + '<td><button data-pid="' + esc(p.id) + '" class="bp"'
+          + ' title="查看该人格的章节结构、文件体积与注入策略">查看</button></td></tr>';
+      }).join("")
+    + '</tbody></table></div></div></div><div id="personaDetail"></div>';
+  el.querySelectorAll(".bp").forEach(function(b){
+    b.addEventListener("click", function(){
+      busy(b, function(){ return loadPersonaDetail(b.dataset.pid); });
+    });
+  });
+};
+
+async function loadPersonaDetail(pid){
+  const box = document.getElementById("personaDetail");
+  box.innerHTML = '<div class="card"><div class="body"><div class="empty">读取中…</div></div></div>';
+  const d = await get("/persona?pid=" + encodeURIComponent(pid));
+  if (d.error) throw new Error(d.error);
+  const inj = d.effective_inject || {};
+  const rows = (d.sections || []).map(function(s){
+    const e = inj[s.title] || {};
+    const v = e.inject || s.inject || "on_demand";
+    const cls = v === "always" ? "person" : (v === "on_demand" ? "fact" : "topic");
+    return '<tr><td>' + esc(s.title) + '</td><td class="hint mono">H' + esc(s.level) + '</td>'
+      + '<td><span class="tag ' + cls + '">' + esc(v) + '</span></td></tr>';
+  }).join("") || '<tr><td colspan="3" class="empty">无章节</td></tr>';
+  const files = (d.files || []).map(function(f){
+    return '<tr><td class="mono" style="font-size:12px">' + esc(f.name) + '</td>'
+      + '<td class="num">' + esc(bytes(f.bytes)) + '</td></tr>';
+  }).join("") || '<tr><td colspan="2" class="empty">无文件</td></tr>';
+  box.innerHTML =
+    '<div class="card"><h2>' + esc(d.display_name)
+    + ' <span class="hint mono">' + esc(d.id) + '</span><span class="spacer"></span>'
+    + '<span class="pill">' + esc(num(d.world, "无世界观")) + '</span>'
+    + (d.lore_extracted ? '<span class="pill on">已抽取 lore</span>' : "")
+    + '</h2><div class="body"><div class="split"><div>'
+    + '<div class="hint" style="margin-bottom:6px">章节结构与注入策略</div>'
+    + '<div class="scroll" style="max-height:340px"><table>'
+    + '<thead><tr><th>章节</th><th>层级</th><th>注入</th></tr></thead><tbody>'
+    + rows + '</tbody></table></div></div><div>'
+    + '<div class="hint" style="margin-bottom:6px">文件（体积）</div>'
+    + '<div class="scroll" style="max-height:340px"><table>'
+    + '<thead><tr><th>文件</th><th class="num">大小</th></tr></thead><tbody>'
+    + files + '</tbody></table></div></div></div></div></div>';
+  countUpAll(box);
+}
+
+/* ── 角色 ── */
+LOADERS.characters = async function(el){
+  const wantInst = (window.__CFG_INST__ === "__default__") ? "" : (window.__CFG_INST__ || "");
+  const d = await get("/characters" + (wantInst ? "?inst=" + encodeURIComponent(wantInst) : ""));
+  const instList = (d.instances || []);
+  const curInst = d.inst || wantInst || "";
+  const list = d.characters || [];
+  const state = d.enabled
+    ? '<span class="pill on">已启用</span>'
+    : '<span class="pill off">已关闭</span>';
+  const rows = list.map(function(c){
+    const meta = [c.en || "", c.is_persona ? "有人格" : "仅资料"].filter(Boolean).join(" · ");
+    return '<tr data-name="' + esc(c.name) + '">'
+      + '<td class="nowrap"><b>' + esc(c.name) + '</b>'
+      + (meta ? '<div class="hint">' + esc(meta) + '</div>' : '') + '</td>'
+      + '<td class="hint" style="white-space:normal">' + (c.brief ? esc(c.brief) : "—") + '</td>'
+      + '<td><input class="ca" value="' + esc((c.aliases || []).join("、")) + '"'
+      + ' placeholder="外号，顿号分隔"'
+      + ' title="该角色的外号，可用顿号/逗号分隔（本名与英文名已自动参与匹配）"></td>'
+      + '<td class="nowrap">'
+      + '<button class="bp" data-act="save" title="保存该角色的外号">保存</button> '
+      + '<button class="bp" data-act="del" title="删除该角色及其全部外号">删除</button>'
+      + '</td></tr>';
+  }).join("") || '<tr><td colspan="4" class="empty">角色库为空</td></tr>';
+
+  el.innerHTML =
+    '<div class="card"><h2>角色名识别'
+    + '<span class="hint">消息里出现角色名/英文名/外号时，把该角色的短资料以 temp 形式注入本轮上下文'
+    + '（只影响这一轮，不落聊天记录）</span><span class="spacer"></span>'
+    + '<span class="hint">实例</span><select id="charInst" style="min-width:110px">'
+    + (instList.length ? instList : [curInst]).map(function(i){
+        return '<option value="' + esc(i) + '"' + (i === curInst ? ' selected' : '') + '>'
+          + esc(i) + '</option>';
+      }).join("")
+    + '</select>' + state + '</h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f" style="flex:2 1 260px"><span>新增角色</span>'
+    + '<input id="charNewName" placeholder="角色名，如 米雪儿·李" title="要新增的角色名"></label>'
+    + '<label class="f" style="flex:3 1 340px"><span>外号（可留空）</span>'
+    + '<input id="charNewAlias" placeholder="奶妈、大狙姐" title="新角色的外号，顿号分隔"></label>'
+    + '<button class="primary fix" id="btnCharAdd" title="新增该角色">新增</button>'
+    + '</div><div class="hint" style="margin-top:8px">外号库文件：' + esc(d.path || "")
+    + '（共 ' + list.length + ' 个角色）</div></div></div>'
+    + '<div class="card"><h2>试跑匹配'
+    + '<span class="hint">纯字符串匹配、不调模型；这里看它到底会注入什么</span>'
+    + '<span class="spacer"></span>'
+    + '<button class="primary" id="btnCharMatch" title="按当前角色库跑一次匹配">试跑</button></h2>'
+    + '<div class="body"><label class="f"><span>测试文本</span>'
+    + '<textarea id="charMatchText" rows="2" placeholder="例如：明姐今天在干嘛？"'
+    + ' title="要测试的一句话"></textarea></label>'
+    + '<pre class="out" id="charMatchOut">—</pre></div></div>'
+    + '<div class="card"><h2>外号库'
+    + '<span class="hint">本名与英文名自动参与匹配，这里维护的是社区外号</span></h2>'
+    + '<div class="body tight"><div class="scroll fill-h2"><table class="t-char">'
+    + '<thead><tr><th>角色</th><th>资料</th><th>外号</th><th></th></tr></thead>'
+    + '<tbody>' + rows + '</tbody></table></div></div></div>';
+
+  el.querySelectorAll("tr[data-name]").forEach(function(tr){
+    const name = tr.dataset.name;
+    const inp = tr.querySelector(".ca");
+    tr.querySelectorAll("button[data-act]").forEach(function(b){
+      b.addEventListener("click", function(){
+        busy(b, async function(){
+          if (b.dataset.act === "save") {
+            const r = await post("/characters/set", {name: name, aliases: inp.value, inst: curInst});
+            toast(r.message || "已保存");
+          } else {
+            const yes = await askConfirm("删除角色「" + name + "」及其全部外号？", {ok: "删除"});
+            if (!yes) return;
+            const r = await post("/characters/delete", {name: name, inst: curInst});
+            toast(r.message || "已删除");
+          }
+          await LOADERS.characters(el);
+        });
+      });
+    });
+  });
+  const charInstSel = el.querySelector("#charInst");
+  if (charInstSel) charInstSel.addEventListener("change", function(){
+    window.__CFG_INST__ = charInstSel.value;
+    LOADERS.characters(el).catch(function(e){ toast(e.message, true); });
+  });
+  on("btnCharAdd", "click", function(e){
+    busy(e.target, async function(){
+      const name = val("charNewName").trim();
+      if (!name) throw new Error("请先填角色名");
+      const r = await post("/characters/set", {name: name, aliases: val("charNewAlias"), inst: curInst});
+      toast(r.message || "已新增");
+      await LOADERS.characters(el);
+    });
+  });
+  on("btnCharMatch", "click", function(e){
+    busy(e.target, async function(){
+      const r = await post("/characters/match", {text: val("charMatchText"), inst: curInst});
+      const nm = r.matched || [];
+      document.getElementById("charMatchOut").textContent =
+        "命中：" + (nm.length ? nm.join("、") : "（无）") + "\n\n"
+        + (r.block || "（不会注入任何内容）");
+    });
+  });
+  countUpAll(el);
+};
+
+/* ── 状态 ── */
+/* 补齐群名与成员昵称：平台不一定把 `group_name` 带在每条消息里，
+ * 迁移过来的历史用户更是从来没记过昵称，页面上就只剩一串 QQ 号。
+ * 这个按钮调一次 OneBot 的 get_group_info / get_group_member_list /
+ * get_friend_list 把本地映射表补满 —— 只写映射表，不动任何聊天状态。 */
+async function refreshNames(btn){
+  const r = await post("/sessions/refresh-names", {groups:true, members:true, friends:true});
+  const parts = ["群名 " + (r.group_names||0), "昵称 " + (r.users||0)];
+  if (r.groups) parts.push("扫描 " + r.groups + " 个群");
+  if (r.budget_exhausted) parts.push("达到调用上限，可再点一次");
+  if (r.deadline_hit) parts.push("超时收工，可再点一次补齐剩余");
+  if ((r.skipped||[]).length) parts.push("跳过 " + r.skipped.length + " 项");
+  if ((r.errors||[]).length) parts.push("失败 " + r.errors.length + " 项");
+  // 会话标签/下拉的数据源变了，缓存必须作废，否则页面还是旧名字
+  SESSIONS = null; UNAMES = {}; SLABELS = {};
+  toast("已补齐：" + parts.join("，"), (r.errors||[]).length > 0);
+  if ((r.errors||[]).length) console.warn("补齐失败项：", r.errors, r.skipped);
+  await refresh();
+}
+LOADERS.state = async function(el){
+  await ensureSessions();
+  el.innerHTML =
+    '<div class="card"><h2>选择会话与成员'
+    + '<span class="hint">状态按「会话 + 人格 + 成员」存；群聊里每个成员各有一份</span>'
+    + '<span class="spacer"></span>'
+    + '<button class="primary" id="btnRefreshNames"'
+    + ' title="调平台 API 拉取群名与群成员昵称，补进本地映射表（只影响管理页显示）">'
+    + '补齐群名与昵称</button></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>会话</span><select id="stUmo" class="sess"></select></label>'
+    + '<label class="f"><span>人格</span><select id="stPersona"></select></label>'
+    + '<label class="f"><span>成员（QQ + 昵称；私聊选「会话级」）</span>'
+    + '<select id="stUid"></select></label>'
+    + '<div class="fix"><button class="primary" id="btnLoadState"'
+    + ' title="按上面的条件读取该成员的状态数值">读取状态</button></div>'
+    + '</div></div></div>'
+    + '<div class="card"><h2>状态数值'
+    + '<span class="hint">改动会立刻写入磁盘，与聊天中用的是同一份数据</span></h2>'
+    + '<div class="body">'
+    + '<div class="grid">'
+    + '<div class="meterbox"><div class="m-top"><span class="m-name">好感度</span>'
+    + '<span class="m-val" id="bAffV">—</span></div>'
+    + '<div class="bar"><i id="bAff" style="--w:0%;background:linear-gradient(90deg,#64f0c8,#7dd3fc)"></i></div>'
+    + '<div class="m-hint">≥80 撒娇 / ≥90 占有欲</div>'
+    + '<input type="number" id="vAff" min="0" max="100" style="margin-top:8px" title="好感度 0-100"></div>'
+    + '<div class="meterbox"><div class="m-top"><span class="m-name">情绪</span>'
+    + '<span class="m-val" id="bEmoV">—</span></div>'
+    + '<div class="bar"><i id="bEmo" style="--w:0%;background:linear-gradient(90deg,#7dd3fc,#a5b4fc)"></i></div>'
+    + '<div class="m-hint">受挫会掉，随时间回复</div>'
+    + '<input type="number" id="vEmo" min="0" max="100" style="margin-top:8px" title="情绪 0-100"></div>'
+    + '<div class="meterbox"><div class="m-top"><span class="m-name">淫乱度</span>'
+    + '<span class="m-val" id="bLewV">—</span></div>'
+    + '<div class="bar"><i id="bLew" style="--w:0%;background:linear-gradient(90deg,#ff9ab5,#ff6b81)"></i></div>'
+    + '<div class="m-hint">随交互演化</div>'
+    + '<input type="number" id="vLew" min="0" max="100" style="margin-top:8px" title="淫乱度 0-100"></div>'
+    + '<div class="meterbox"><div class="m-top"><span class="m-name">恶堕值</span>'
+    + '<span class="m-val" id="bDepV">—</span></div>'
+    + '<div class="bar"><i id="bDep" style="--w:0%;background:linear-gradient(90deg,#b48cff,#7c5cd6)"></i></div>'
+    + '<div class="m-hint">随交互演化</div>'
+    + '<input type="number" id="vDep" min="0" max="100" style="margin-top:8px" title="恶堕值 0-100"></div>'
+    + '</div>'
+    + '<label style="display:flex;align-items:center;gap:8px;margin:14px 0 12px">'
+    + '<input type="checkbox" id="vStu" style="width:auto" title="本会话是否已触发过结巴">'
+    + '<span class="hint">stutter_done：本会话是否已触发过结巴（勾上=已触发，不再触发）</span></label>'
+    + '<div class="row">'
+    + '<div class="fix"><button class="primary" id="btnSaveState"'
+    + ' title="把上面的数值写回磁盘">保存数值</button></div>'
+    + '<div class="fix"><button class="danger" id="btnClearLog"'
+    + ' title="清空该成员的状态日志，并把情绪重置为 100">清空状态日志与情绪</button></div>'
+    + '</div><pre class="out" id="stSnap" style="margin-top:12px">—</pre>'
+    + '</div></div>'
+    + '<div class="card"><h2>注入覆盖'
+    + '<span class="hint">临时给这个成员追加一段指令，会拼在人格注入之后；留空并保存即清除</span></h2>'
+    + '<div class="body"><textarea id="stInject" placeholder="例如：他现在心情很差，别开玩笑"></textarea>'
+    + '<div class="row" style="margin-top:10px"><div class="fix">'
+    + '<button class="primary" id="btnSaveInject" title="保存注入覆盖（留空=清除）">保存注入覆盖</button>'
+    + '</div></div></div></div>'
+    + '<div class="card"><h2>状态日志'
+    + '<span class="hint">最近 20 条；用于重复消息提示与「内心活动注入」</span></h2>'
+    + '<div class="body tight"><div class="scroll" id="stLog"></div></div></div>';
+
+  const umoSel = document.getElementById("stUmo");
+  umoSel.innerHTML = sessOptions() || '<option value="">（还没有任何会话）</option>';
+
+  const syncPersonas = function(){
+    const s = SESSIONS.sessions.find(function(x){ return x.umo === umoSel.value; });
+    const list = s ? s.personas : [];
+    const perSel = document.getElementById("stPersona");
+    perSel.innerHTML = list.map(function(p){
+      return '<option value="' + esc(p) + '">' + esc(p) + '</option>';
+    }).join("") || '<option value="">（该会话无人格状态）</option>';
+    if (CUR_PERSONA && list.indexOf(CUR_PERSONA) >= 0) perSel.value = CUR_PERSONA;
+    syncMembers();
+  };
+  // 成员下拉：数据来自状态目录（真实存过状态的成员），昵称来自消息记录。
+  // 默认选第一个成员 —— 旧版 uid 恒为空、页面上却显示出「某个人的」数值，
+  // 让人分不清看到的是谁的；现在一进来就明确选中了谁。
+  const syncMembers = function(){
+    const s = SESSIONS.sessions.find(function(x){ return x.umo === umoSel.value; });
+    const persona = val("stPersona");
+    const uids = (s && persona && s.members && s.members[persona]) || [];
+    const uidSel = document.getElementById("stUid");
+    uidSel.innerHTML = uids.map(function(u){
+      const nm = UNAMES[u] || "";
+      return '<option value="' + esc(u) + '" class="useropt"><b>' + esc(u)
+        + '</b>' + (nm ? '<i>' + esc(nm) + '</i>' : '') + '</option>';
+    }).join("");
+    uidSel.insertAdjacentHTML("beforeend",
+      '<option value="" class="useropt"><b>（会话级 / 私聊）</b>'
+      + '<i>uid 留空的状态</i></option>');
+    // 有成员默认选第一个；没有则回退「会话级」
+    if (uids.length) uidSel.selectedIndex = 0;
+    else uidSel.value = "";
+  };
+  umoSel.addEventListener("change", function(){
+    syncPersonas();
+    loadState().catch(function(e){ toast(e.message, true); });
+  });
+  syncPersonas();
+  // 人格/成员改了就自动读取，省一次点击；「读取状态」按钮留给手动重读
+  const perSel0 = document.getElementById("stPersona");
+  if (perSel0) perSel0.addEventListener("change", function(){
+    syncMembers();
+    loadState().catch(function(e){ toast(e.message, true); });
+  });
+  const uidSel0 = document.getElementById("stUid");
+  if (uidSel0) uidSel0.addEventListener("change", function(){
+    loadState().catch(function(e){ toast(e.message, true); });
+  });
+  // 数字输入变化时，仪表条实时跟随
+  [["vAff","bAff","bAffV"], ["vEmo","bEmo","bEmoV"],
+   ["vLew","bLew","bLewV"], ["vDep","bDep","bDepV"]].forEach(function(trio){
+    const src = document.getElementById(trio[0]);
+    if (src) src.addEventListener("input", function(){ paintMeter(trio[1], trio[2], src.value); });
+  });
+
+  on("btnLoadState", "click", function(e){ busy(e.target, loadState); });
+  on("btnRefreshNames", "click", function(e){ busy(e.target, refreshNames); });
+  on("btnSaveState", "click", function(e){ busy(e.target, saveState); });
+  on("btnClearLog", "click", function(e){
+    busy(e.target, async function(){
+      if (!(await askConfirm("确定清空该成员的状态日志并把情绪重置为 100？"))) return;
+      await clearLog();
+    });
+  });
+  on("btnSaveInject", "click", function(e){ busy(e.target, saveInject); });
+  await loadState();
+};
+
+function paintMeter(barId, valId, v){
+  const bar = document.getElementById(barId);
+  const lab = document.getElementById(valId);
+  const n = Math.max(0, Math.min(100, parseInt(v, 10)));
+  if (isNaN(n)) return;
+  if (bar) bar.style.setProperty("--w", n + "%");
+  if (lab) lab.textContent = n;
+}
+
+function stateQuery(){
+  return new URLSearchParams({
+    umo: val("stUmo"), persona: val("stPersona"), uid: val("stUid"),
+  }).toString();
+}
+async function loadState(){
+  const d = await get("/state?" + stateQuery());
+  const s = d.state || {};
+  const uidNow = val("stUid");
+  const whoNow = uidNow ? ("成员 " + userLabel(uidNow, UNAMES)) : "会话级状态（uid 为空）";
+  document.getElementById("vAff").value = num(s.affection, 0);
+  document.getElementById("vEmo").value = num(s.emotion, 100);
+  document.getElementById("vLew").value = num(s.lewdness, 0);
+  document.getElementById("vDep").value = num(s.depravity, 0);
+  paintMeter("bAff", "bAffV", num(s.affection, 0));
+  paintMeter("bEmo", "bEmoV", num(s.emotion, 100));
+  paintMeter("bLew", "bLewV", num(s.lewdness, 0));
+  paintMeter("bDep", "bDepV", num(s.depravity, 0));
+  document.getElementById("vStu").checked = !!s.stutter_done;
+  document.getElementById("stInject").value = d.inject || "";
+  document.getElementById("stSnap").textContent =
+    "当前查看：" + whoNow + "\n等级 " + d.tier + "　日志 " + d.log_count + " 条\n"
+    + (d.snapshot || "");
+  const log = d.log || [];
+  document.getElementById("stLog").innerHTML = log.length
+    ? '<table><thead><tr><th>角色</th><th>内容</th></tr></thead><tbody>'
+      + log.slice().reverse().map(function(r){
+          return '<tr><td><span class="tag ' + (r.role === "user" ? "fact" : "topic")
+            + '">' + esc(r.role) + '</span></td><td>'
+            + esc(r.content || r.lili_thought || "") + '</td></tr>';
+        }).join("") + '</tbody></table>'
+    : '<div class="empty">该成员还没有状态日志</div>';
+}
+async function saveState(){
+  await post("/state/set", {
+    umo: val("stUmo"), persona: val("stPersona"), uid: val("stUid"),
+    values: {
+      affection: +val("vAff"), emotion: +val("vEmo"),
+      lewdness: +val("vLew"), depravity: +val("vDep"),
+      stutter_done: document.getElementById("vStu").checked,
+    },
+  });
+  toast("状态已保存");
+  await loadState();
+}
+async function clearLog(){
+  const r = await post("/state/clear-log", {
+    umo: val("stUmo"), persona: val("stPersona"), uid: val("stUid")});
+  toast("已清空 " + r.cleared + " 条日志，情绪重置为 100");
+  await loadState();
+}
+async function saveInject(){
+  const text = val("stInject");
+  await post("/inject/set", {
+    umo: val("stUmo"), persona: val("stPersona"), uid: val("stUid"), text: text});
+  toast(text.trim() ? "注入覆盖已保存" : "注入覆盖已清除");
+  await loadState();
+}
+
+/* ── 印象 ── */
+/* 印象页下拉：默认只列**真的有印象**的用户。
+ * 迁移过来的 314 个用户里有 271 个是 `{"msg_count": 1}` 这种空壳 ——
+ * 全铺进下拉就是让人在几百个 QQ 号里挑，所以默认按更新时间降序列
+ * 有正文的那批，想看全部再勾「显示全部已知用户」。 */
+function impOptionText(u){
+  const q = (u && u.uid) || "";
+  const nm = dispName(q, (u && u.name) || "");
+  const when = (u && u.updated) ? " · " + ago(u.updated) : "";
+  return (nm ? (nm + "（" + q + "）") : ("QQ " + q)) + when;
+}
+LOADERS.impression = async function(el){
+  await ensureSessions();
+  const all = SESSIONS.users || [];
+  const byUid = {};
+  all.forEach(function(u){ byUid[u.uid] = u; });
+  const defList = (SESSIONS.users_with_impression || []).map(function(uid){
+    return byUid[uid] || {uid: uid, name: ""};
+  });
+  const hidden = Math.max(0, all.length - defList.length);
+  el.innerHTML =
+    '<div class="card"><h2>用户印象'
+    + '<span class="hint">每 N 轮后台自动总结一次；「人工覆写」一旦填写就优先生效，自动总结不会覆盖它</span></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>用户（默认只列已有印象的 '
+    + defList.length + ' 人）</span>'
+    + '<select id="impUid"></select></label>'
+    + '<label class="f" id="impUidManualWrap" style="display:none"><span>手动输入 QQ</span>'
+    + '<input id="impUidManual" placeholder="如 10001"></label>'
+    + '<div class="fix"><button class="primary" id="btnLoadImp" title="读取该用户的印象">读取</button></div>'
+    + '<div class="fix"><button class="danger" id="btnResetImp"'
+    + ' title="把轮数计数清零，下次满足阈值时会重新总结">重置轮数计数</button></div>'
+    + '</div>'
+    + '<label style="display:flex;align-items:center;gap:8px;margin:0 0 12px">'
+    + '<input type="checkbox" id="impShowAll" style="width:auto"'
+    + ' title="连同尚未生成印象的用户一起列出">'
+    + '<span class="hint">显示全部已知用户（另有 ' + hidden
+    + ' 人还没有印象，多为只说过一两句的历史用户）</span></label>'
+    + '<div class="grid" id="impMeta" style="margin-bottom:12px"></div>'
+    + '<label class="f"><span>自动总结 · SFW</span><textarea id="impSfw" placeholder="（尚未生成）"></textarea></label>'
+    + '<label class="f"><span>自动总结 · NSFW</span><textarea id="impNsfw" placeholder="（尚未生成）"></textarea></label>'
+    + '<label class="f"><span>人工覆写 · SFW（留空则用自动总结）</span><textarea id="impSfwC"></textarea></label>'
+    + '<label class="f"><span>人工覆写 · NSFW（留空则用自动总结）</span><textarea id="impNsfwC"></textarea></label>'
+    + '<div class="row"><div class="fix"><button class="primary" id="btnSaveImp"'
+    + ' title="保存印象（覆写留空即清除覆写）">保存</button></div></div>'
+    + '<pre class="out" id="impEff" style="margin-top:12px">—</pre>'
+    + '</div></div>';
+  const uidEl2 = document.getElementById("impUid");
+  const renderOpts = function(showAll){
+    const prev = uidEl2.value;
+    const src = showAll ? all : defList;
+    uidEl2.innerHTML = src.map(function(u){
+      return '<option value="' + esc(u.uid) + '">' + esc(impOptionText(u))
+        + '</option>';
+    }).join("") + '<option value="">其他 QQ（手动输入）…</option>';
+    if (prev && src.some(function(u){ return u.uid === prev; })) uidEl2.value = prev;
+    syncManual();
+  };
+  // 选「其他 QQ」时展开手动输入框
+  const syncManual = function(){
+    const wrap = document.getElementById("impUidManualWrap");
+    if (wrap) wrap.style.display = uidEl2.value === "" ? "block" : "none";
+  };
+  renderOpts(false);
+  uidEl2.addEventListener("change", syncManual);
+  const chk = document.getElementById("impShowAll");
+  if (chk) chk.addEventListener("change", function(e){
+    renderOpts(!!e.target.checked);
+  });
+  const uidMan = document.getElementById("impUidManual");
+  if (uidMan) uidMan.addEventListener("keydown", function(ev){
+    if (ev.key === "Enter") busy(document.getElementById("btnLoadImp"), loadImpression);
+  });
+  on("btnLoadImp", "click", function(e){ busy(e.target, loadImpression); });
+  on("btnSaveImp", "click", function(e){ busy(e.target, saveImpression); });
+  on("btnResetImp", "click", function(e){ busy(e.target, resetImpCount); });
+};
+function impUid(){
+  // 下拉选了「其他 QQ」→ 用手动输入框的值
+  const selV = val("impUid");
+  const v = (selV === "" ? val("impUidManual") : selV).trim();
+  if (!v) throw new Error("请先选择或输入用户 QQ");
+  return v;
+}
+async function loadImpression(){
+  const uid = impUid();
+  const d = await get("/impression?uid=" + encodeURIComponent(uid));
+  const i = d.impression || {};
+  document.getElementById("impMeta").innerHTML = kvGrid([
+    ["轮数计数", i.msg_count], ["上次更新", i.updated ? ago(i.updated) : "从未"],
+  ]);
+  countUpAll(document.getElementById("impMeta"));
+  document.getElementById("impSfw").value  = i.sfw || "";
+  document.getElementById("impNsfw").value = i.nsfw || "";
+  document.getElementById("impSfwC").value = i.sfw_custom || "";
+  document.getElementById("impNsfwC").value = i.nsfw_custom || "";
+  document.getElementById("impEff").textContent = d.effective || "（无有效印象）";
+}
+async function saveImpression(){
+  await post("/impression/set", {
+    uid: impUid(),
+    sfw: val("impSfw"), nsfw: val("impNsfw"),
+    sfw_custom: val("impSfwC"), nsfw_custom: val("impNsfwC"),
+  });
+  toast("印象已保存");
+  await loadImpression();
+}
+async function resetImpCount(){
+  await post("/impression/set", {uid: impUid(), reset_count: true});
+  toast("轮数计数已清零");
+  await loadImpression();
+}
+
+/* ── 记忆 ── */
+LOADERS.memory = async function(el){
+  await ensureSessions();
+  let personaOpts = "";
+  try {
+    const ps = await get("/personas");
+    personaOpts = (ps.personas || []).map(function(p){
+      return '<option value="' + esc(p.id) + '">'
+        + esc(p.display_name) + '（' + esc(p.id) + '）</option>';
+    }).join("");
+  } catch (e) {}
+  el.innerHTML =
+    '<div class="card"><h2>召回实测'
+    + '<span class="hint">输入一句话，看它到底想起了什么、文档路与图谱路各命中多少、'
+    + '有没有被相似度下限挡掉；选「人格」+ 非零「人格策略」可预览隔离效果'
+    + '（与配置项「记忆的人格策略」同语义）</span></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>会话</span><select id="memUmo" class="sess"></select></label>'
+    + '<label class="f"><span>查询语句</span><input id="memQuery" placeholder="如 卡拉彼丘阵营怎么分"></label>'
+    + '<label class="f fix" style="flex:0 0 200px"><span>人格（隔离参照）</span>'
+    + '<select id="memPersona"><option value="">（不指定）</option>'
+    + personaOpts + '</select></label>'
+    + '<label class="f fix" style="flex:0 0 160px"><span>人格策略</span>'
+    + '<select id="memPolicy">'
+    + '<option value="0" selected>关闭（共享）</option>'
+    + '<option value="1">本命优先（降权）</option>'
+    + '<option value="2">严格隔离</option>'
+    + '</select></label>'
+    + '<div class="fix"><button class="primary" id="btnRecall"'
+    + ' title="跑一次真实的双路召回并展开明细">召回</button></div>'
+    + '</div><div id="recallOut"></div></div></div>'
+    + '<div class="card"><h2>记忆条目'
+    + '<span class="hint">对话攒够 N 轮后由 LLM 固化成一条带元数据的记忆；'
+    + '「待固化」是还没攒够的轮数。勾选后可只删其中若干条；'
+    + '「编辑」可手工改写正文（保存时会重算向量并重建该条的图谱条目）</span><span class="spacer"></span>'
+    + '<button class="danger" id="btnDelSel" disabled'
+    + ' title="删除勾选的记忆条目（连带其派生出的图谱条目），不可撤销">删除选中</button>'
+    + '<button class="danger" id="btnForget"'
+    + ' title="清空该会话（或其记忆组）的全部记忆，不可撤销">清空该会话记忆</button></h2>'
+    + '<div class="body"><div class="duo">'
+    + '<div class="vlist" id="memStats"></div>'
+    + '<div class="scroll fill-h" id="memList"></div>'
+    + '</div></div></div>';
+
+  const sel = document.getElementById("memUmo");
+  sel.innerHTML = sessOptions() || '<option value="">（还没有会话）</option>';
+  sel.addEventListener("change", function(){ loadMemory(); });
+  on("btnRecall", "click", function(e){ busy(e.target, runRecall); });
+  on("btnDelSel", "click", function(e){
+    busy(e.target, async function(){
+      const ids = memPickedIds();
+      if (!ids.length) { toast("请先勾选要删除的记忆"); return; }
+      if (!(await askConfirm("删除勾选的 " + ids.length
+          + " 条记忆？会连带清掉它们派生出的图谱条目，不可撤销。"))) return;
+      const r = await post("/memory/delete", {umo: val("memUmo"), ids: ids});
+      toast("已删除 " + r.deleted + " 条记忆"
+        + (r.graph_dropped ? "（连带图谱 " + r.graph_dropped + " 条）" : ""));
+      await loadMemory();
+    }).then(syncDelBtn);
+  });
+  on("btnForget", "click", function(e){
+    busy(e.target, async function(){
+      if (!(await askConfirm("确定清空该会话的记忆？此操作不可撤销。"))) return;
+      const r = await post("/memory/forget", {umo: val("memUmo")});
+      toast("已清空记忆（键 " + r.key + "）");
+      await loadMemory();
+    });
+  });
+  await loadMemory();
+};
+
+/* 最近一次加载到的记忆条目（「编辑」要取完整正文，表格里是截断显示的） */
+let memAtoms = [];
+
+async function loadMemory(){
+  const umo = val("memUmo");
+  if (!umo) return;
+  const d = await get("/memory?umo=" + encodeURIComponent(umo));
+  const st = d.stats || {}, g = st.graph || {};
+  document.getElementById("memStats").innerHTML = kvCol([
+    ["记忆键", d.key, "sm"], ["条目数", (d.atoms||[]).length],
+    ["待固化轮数", d.pending], ["图谱节点", g.nodes],
+    ["图谱边", g.edges], ["条目↔节点链接", g.entry_links],
+    ["已固化", st.consolidated], ["降级固化", st.degraded],
+    ["embedding", st.available ? "可用" : "不可用"],
+  ]);
+  countUpAll(document.getElementById("memStats"));
+  const atoms = d.atoms || [];
+  memAtoms = atoms;
+  const box = document.getElementById("memList");
+  box.innerHTML = atoms.length
+    ? '<table><thead><tr>'
+      + '<th class="pick"><input type="checkbox" id="memAll" title="全选 / 取消全选"></th>'
+      + '<th>时间</th><th>话题</th><th>内容</th>'
+      + '<th class="num">命中</th><th class="num">向量</th><th></th></tr></thead><tbody>'
+      + atoms.map(function(a){
+          const tp = (a.topics||[]).map(function(t){
+            return '<span class="tag topic">' + esc(t) + '</span>'; }).join("")
+            || '<span class="hint">—</span>';
+          return '<tr><td class="pick"><input type="checkbox" class="mem-pick"'
+            + ' value="' + esc(a.id) + '" title="' + esc(a.id) + '"></td>'
+            + '<td class="hint mono" style="white-space:nowrap;font-size:11px">' + esc(ago(a.ts)) + '</td>'
+            + '<td>' + tp + '</td>'
+            + '<td>' + esc((a.text||"").slice(0,220))
+            + (a.degraded ? ' <span class="tag fact" title="总结失败，用原文兜底">降级</span>' : "")
+            + '</td><td class="num">' + esc(a.hits) + '</td>'
+            + '<td class="num">' + (a.has_vec ? "有" : '<span class="hint">无</span>') + '</td>'
+            + '<td style="white-space:nowrap"><button class="mem-edit"'
+            + ' data-id="' + esc(a.id) + '"'
+            + ' title="编辑这条记忆的正文（保存时会重算向量并重建它的图谱条目）">编辑</button></td></tr>';
+        }).join("") + '</tbody></table>'
+    : '<div class="empty">该会话还没有固化出记忆（攒够阈值后才会生成）</div>';
+  const all = document.getElementById("memAll");
+  if (all) all.addEventListener("change", function(){
+    box.querySelectorAll(".mem-pick").forEach(function(c){ c.checked = all.checked; });
+    syncDelBtn();
+  });
+  box.querySelectorAll(".mem-pick").forEach(function(c){
+    c.addEventListener("change", function(){
+      const ps = box.querySelectorAll(".mem-pick");
+      const n = box.querySelectorAll(".mem-pick:checked").length;
+      if (all) { all.checked = n > 0 && n === ps.length; all.indeterminate = n > 0 && n < ps.length; }
+      syncDelBtn();
+    });
+  });
+  box.querySelectorAll(".mem-edit").forEach(function(b){
+    b.addEventListener("click", function(){
+      const id = b.dataset.id;
+      busy(b, function(){ return editMemory(id); });
+    });
+  });
+  syncDelBtn();
+}
+
+/* 编辑单条记忆的正文（向量与图谱条目由后端一起重建） */
+async function editMemory(atomId){
+  const a = (memAtoms || []).filter(function(x){ return x.id === atomId; })[0];
+  if (!a) { toast("找不到这条记忆了，先切一下会话刷新", true); return; }
+  const nt = await askPrompt(
+    "编辑这条记忆的正文。保存后会重新算向量、并按新正文重建它的图谱条目"
+    + "（原来的话题与参与者保留）：", a.text || "", {multiline: true});
+  if (nt === null) return;
+  const t = String(nt).trim();
+  if (!t) { toast("正文不能为空", true); return; }
+  if (t === String(a.text || "").trim()) { toast("内容没变，未保存"); return; }
+  const r = await post("/memory/edit",
+    {umo: val("memUmo"), id: atomId, text: t});
+  if (r.error) { toast("保存失败：" + memEditErr(r.error), true); return; }
+  toast("已更新记忆" + (r.graph_dropped
+    ? "（重建图谱条目 " + r.graph_dropped + " 条）" : ""));
+  await loadMemory();
+}
+
+/* 编辑失败的原因翻译成中文（后端只回错误码，不暴露内部细节） */
+function memEditErr(code){
+  return {
+    empty: "正文不能为空",
+    too_long: "内容太长（上限 4000 字）",
+    not_found: "这条记忆已经不在了（可能刚被删除）",
+    unchanged: "内容没变",
+    embedding_unavailable: "embedding 不可用（记忆功能已关或模型没配好）",
+    embedding_failed: "算不出向量，embedding 调用失败",
+    missing_id: "缺少记忆 id",
+  }[code] || code;
+}
+
+/* 勾选的记忆 id（保持表格顺序） */
+function memPickedIds(){
+  const box = document.getElementById("memList");
+  if (!box) return [];
+  return Array.prototype.map.call(box.querySelectorAll(".mem-pick:checked"),
+    function(c){ return c.value; });
+}
+/* 「删除选中」按钮：没有勾选时禁用 */
+function syncDelBtn(){
+  const b = document.getElementById("btnDelSel");
+  if (b) b.disabled = memPickedIds().length === 0;
+}
+
+async function runRecall(){
+  const umo = val("memUmo");
+  const q = val("memQuery").trim();
+  if (!q) throw new Error("请先输入查询语句");
+  const box = document.getElementById("recallOut");
+  box.innerHTML = '<div class="empty"><div class="skel" style="width:40%;margin:0 auto"></div>'
+    + '<div style="margin-top:8px;font-size:12px">双路召回中…</div></div>';
+  const d = await post("/memory/recall", {umo: umo, query: q, top_k: 8,
+    persona: val("memPersona"), policy: parseInt(val("memPolicy") || "0", 10) || 0});
+  if (d.error) { box.innerHTML = '<pre class="out" style="margin-top:12px">' + esc(d.error) + '</pre>'; return; }
+  const w = d.weights || {};
+  const docTxt = (d.doc_hits||[]).map(function(h){
+    return "[" + h.score + "]" + (h.passed_min_score ? "" : " ✗被下限挡掉") + " " + h.text;
+  }).join("\n\n") || "（无命中）";
+  const grTxt = (d.graph_hits||[]).map(function(h){
+    return "[" + h.score + "] " + h.text;
+  }).join("\n\n") || "（无命中）";
+  const fuTxt = (d.fused||[]).map(function(h,i){
+    return (i+1) + ". [合计 " + h.final + " = 文档 " + h.doc + " + 图谱 " + h.graph + "]\n" + h.text;
+  }).join("\n\n") || "（无）";
+  box.innerHTML =
+    '<div class="grid" style="margin:12px 0">'
+    + kv("意图", d.intent) + kv("文档路权重", w.document) + kv("图谱路权重", w.graph)
+    + kv("相似度下限", d.min_score) + kv("文档命中", (d.doc_hits||[]).length)
+    + kv("图谱命中", (d.graph_hits||[]).length) + kv("融合结果", (d.fused||[]).length)
+    + kv("人格策略", d.policy_label || d.policy)
+    + '</div><div class="split">'
+    + '<div><div class="hint" style="margin-bottom:6px">文档路（记忆条目向量）</div>'
+    + '<pre class="out">' + esc(docTxt) + '</pre></div>'
+    + '<div><div class="hint" style="margin-bottom:6px">图谱路（BM25 + 条目向量 → RRF）</div>'
+    + '<pre class="out">' + esc(grTxt) + '</pre></div></div>'
+    + '<div class="hint" style="margin:12px 0 6px">融合后实际注入的内容</div>'
+    + '<pre class="out">' + esc(fuTxt) + '</pre>';
+  countUpAll(box);
+}
+
+/* ── 知识图谱 ── */
+LOADERS.graph = async function(el){
+  el.innerHTML =
+    '<div class="card"><h2>知识图谱'
+    + '<span class="hint">从记忆里抽取的实体（节点）与关系（边）。'
+    + '拖动空白处平移，滚轮缩放，拖节点可移动，点节点看详情</span>'
+    + '<span class="spacer"></span>'
+    + '<button id="btnGraphFit" title="把视图缩放到刚好容纳整张图">适配视图</button>'
+    + '<button id="btnGraphReload" title="重新拉取图谱数据">重载数据</button></h2>'
+    + '<div class="body"><div class="duo wide">'
+    + '<div><div class="vlist" id="graphStats"></div>'
+    + '<div class="row" style="margin-top:12px">'
+    + '<label class="f" style="margin-bottom:0"><span>关键词检索（BM25）</span>'
+    + '<input id="gQuery" placeholder="如 卡拉彼丘"></label>'
+    + '<div class="fix"><button id="btnGSearch" style="margin-bottom:1px"'
+    + ' title="在全部图谱条目里做关键词检索">检索</button></div>'
+    + '</div><div id="gSearchOut" style="margin-top:10px"></div></div>'
+    + '<div class="graphwrap"><canvas id="gcanvas"></canvas>'
+    + '<div class="legend">'
+    + '<span><i style="background:#64f0c8;color:#64f0c8"></i>话题</span>'
+    + '<span><i style="background:#6ee7a0;color:#6ee7a0"></i>人物</span>'
+    + '<span><i style="background:#ffc857;color:#ffc857"></i>事实</span>'
+    + '<span><i style="background:#b48cff;color:#b48cff"></i>摘要</span>'
+    + '<span class="hint mono" id="gmeta" style="font-size:11px"></span></div></div>'
+    + '</div></div></div>'
+    + '<div id="graphNode"></div>';
+
+  on("btnGraphReload", "click", function(e){ busy(e.target, loadGraph); });
+  on("btnGraphFit", "click", function(){ fitGraph(); });
+  on("btnGSearch", "click", function(e){
+    busy(e.target, async function(){
+      const q = val("gQuery").trim();
+      if (!q) throw new Error("请先输入关键词");
+      const d = await get("/graph/search?q=" + encodeURIComponent(q) + "&k=12");
+      const box2 = document.getElementById("gSearchOut");
+      box2.innerHTML = (d.hits||[]).length
+        ? '<table style="margin-top:12px"><thead><tr><th class="num">得分</th><th>类型</th><th>内容</th></tr></thead><tbody>'
+          + d.hits.map(function(h){
+              return '<tr><td class="num">' + esc(h.score) + '</td>'
+                + '<td><span class="tag ' + esc(h.type) + '">' + esc(h.type) + '</span></td>'
+                + '<td>' + esc(h.content) + '</td></tr>';
+            }).join("") + '</tbody></table>'
+        : '<div class="empty" style="margin-top:12px">（无命中）</div>';
+    });
+  });
+  await loadGraph();
+};
+
+let G = null;
+let GHANDLERS = [];   // 图谱的 window 级监听器：切换页签时必须摘掉，否则会累积
+
+async function loadGraph(){
+  const d = await get("/graph?limit=180");
+  GRAPH = d;
+  const st = d.stats || {};
+  document.getElementById("graphStats").innerHTML = kvCol([
+    ["节点", st.nodes], ["边", st.edges], ["图谱条目", st.entries],
+    ["条目↔节点链接", st.entry_links], ["倒排词", st.tokens],
+    ["文件大小", bytes(st.bytes)],
+    ["本图节点", (d.nodes||[]).length], ["本图边", (d.edges||[]).length],
+  ]);
+  document.getElementById("gmeta").textContent = d.truncated
+    ? "共 " + d.total_nodes + " 个节点，按连接数取前 " + (d.nodes||[]).length + " 个显示"
+    : "全部 " + (d.nodes||[]).length + " 个节点";
+  initGraph(d);
+  countUpAll(document.getElementById("graphStats"));
+}
+
+function initGraph(d){
+  // 切换页签会重新调用本函数；先摘掉上一轮挂在 window 上的监听器
+  GHANDLERS.forEach(function(h){ window.removeEventListener(h[0], h[1]); });
+  GHANDLERS = [];
+  const listen = function(ev, fn, opt){
+    window.addEventListener(ev, fn, opt);
+    GHANDLERS.push([ev, fn]);
+  };
+
+  const cv = document.getElementById("gcanvas");
+  const box = cv.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  // 高度跟容器走（容器用 dvh 撑满可视区），不再写死 540
+  const W = Math.max(320, box.width), H = Math.max(320, box.height);
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const NCOL = {topic:"#64f0c8", person:"#6ee7a0", fact:"#ffc857", summary:"#b48cff"};
+  const colorOf = function(t){ return NCOL[t] || "#8fa3c8"; };
+
+  const nodes = (d.nodes || []).map(function(n, i){
+    return Object.assign({}, n, {
+      x: W/2 + Math.cos(i * 2.399) * (60 + Math.random()*W*0.3),
+      y: H/2 + Math.sin(i * 2.399) * (50 + Math.random()*H*0.3),
+      vx: 0, vy: 0,
+      r: 5 + Math.min(13, Math.sqrt(n.degree || 0) * 3.2),
+      rr: 0,   // 渲染半径：入场时从 0 长到 r
+    });
+  });
+  const idx = {}; nodes.forEach(function(n, i){ idx[n.id] = i; });
+  const edges = (d.edges || []).map(function(e){
+    return Object.assign({}, e, {a: idx[e.source], b: idx[e.target]});
+  }).filter(function(e){ return e.a !== undefined && e.b !== undefined; });
+
+  G = {cv: cv, ctx: ctx, W: W, H: H, nodes: nodes, edges: edges,
+       view: {x:0, y:0, k:1}, sel: null, alpha: 1, drag: null, pan: null,
+       born: performance.now()};
+
+  function tick(){
+    const N = G.nodes, E = G.edges;
+    for (let i = 0; i < N.length; i++) {
+      const a = N[i];
+      for (let j = i + 1; j < N.length; j++) {
+        const b = N[j];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let d2 = dx*dx + dy*dy;
+        if (d2 < 1) { dx = Math.random() - .5; dy = Math.random() - .5; d2 = 1; }
+        if (d2 > 90000) continue;
+        const dd = Math.sqrt(d2);
+        const f = 2400 / d2;
+        const fx = dx/dd*f, fy = dy/dd*f;
+        a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+      }
+    }
+    for (let k = 0; k < E.length; k++) {
+      const e = E[k], a = N[e.a], b = N[e.b];
+      if (!a || !b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const dd = Math.max(1, Math.sqrt(dx*dx + dy*dy));
+      const f = (dd - 78) * 0.014;
+      const fx = dx/dd*f, fy = dy/dd*f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+    for (let k = 0; k < N.length; k++) {
+      const n = N[k];
+      n.vx += (W/2 - n.x) * 0.0022;
+      n.vy += (H/2 - n.y) * 0.0028;
+      n.vx *= 0.82; n.vy *= 0.82;
+      if (n === G.drag) { n.vx = n.vy = 0; continue; }
+      n.x += n.vx * G.alpha; n.y += n.vy * G.alpha;
+    }
+    G.alpha = Math.max(0.06, G.alpha * 0.994);
+  }
+
+  function draw(){
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(G.view.x, G.view.y);
+    ctx.scale(G.view.k, G.view.k);
+    // 边：二次贝塞尔曲线，选中邻居高亮
+    ctx.lineWidth = 1 / G.view.k;
+    for (let k = 0; k < G.edges.length; k++) {
+      const e = G.edges[k], a = G.nodes[e.a], b = G.nodes[e.b];
+      if (!a || !b) continue;
+      const hot = G.sel && (G.sel.id === a.id || G.sel.id === b.id);
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const nx = -(b.y - a.y) * 0.07, ny = (b.x - a.x) * 0.07;
+      ctx.strokeStyle = hot ? "rgba(100,240,200,.8)" : "rgba(125,150,200,.20)";
+      ctx.lineWidth = (hot ? 1.6 : 1) / G.view.k;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(mx + nx, my + ny, b.x, b.y);
+      ctx.stroke();
+    }
+    // 节点：磷光发光 + 入场生长
+    const t = performance.now();
+    for (let k = 0; k < G.nodes.length; k++) {
+      const n = G.nodes[k];
+      n.rr += (n.r - n.rr) * 0.08;
+      const c = colorOf(n.type);
+      const isSel = G.sel && G.sel.id === n.id;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, Math.max(0.5, n.rr), 0, 6.2832);
+      ctx.shadowColor = c;
+      ctx.shadowBlur = isSel ? 22 : 10;
+      ctx.fillStyle = isSel ? "#ffffff" : c;
+      ctx.globalAlpha = .92; ctx.fill();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      if (isSel) {
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 3 / G.view.k;
+        ctx.globalAlpha = .55 + .3 * Math.sin(t / 260);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.rr + 5 / G.view.k, 0, 6.2832);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      if (G.view.k > 0.75 || n.degree > 5) {
+        ctx.fillStyle = "rgba(220,228,244,.85)";
+        ctx.font = (11 / G.view.k) + "px ui-monospace,Consolas,monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(String(n.value).slice(0, 10), n.x, n.y - n.rr - 5/G.view.k);
+      }
+    }
+    ctx.restore();
+  }
+
+  function loop(){
+    if (!G || G.cv !== cv) return;
+    tick(); draw();
+    requestAnimationFrame(loop);
+  }
+  loop();
+
+  const toWorld = function(ev){
+    const r = cv.getBoundingClientRect();
+    return {x: (ev.clientX - r.left - G.view.x)/G.view.k,
+            y: (ev.clientY - r.top - G.view.y)/G.view.k};
+  };
+  const pick = function(p){
+    for (let i = G.nodes.length - 1; i >= 0; i--) {
+      const n = G.nodes[i];
+      if (Math.sqrt((n.x-p.x)*(n.x-p.x) + (n.y-p.y)*(n.y-p.y)) <= n.r + 3/G.view.k) return n;
+    }
+    return null;
+  };
+  cv.addEventListener("mousedown", function(ev){
+    const p = toWorld(ev), n = pick(p);
+    if (n) { G.drag = n; G.sel = n; G.alpha = Math.max(G.alpha, .5); showNode(n.id); }
+    else { G.pan = {x: ev.clientX - G.view.x, y: ev.clientY - G.view.y}; }
+  });
+  listen("mousemove", function(ev){
+    if (!G) return;
+    if (G.drag) { const p = toWorld(ev); G.drag.x = p.x; G.drag.y = p.y; }
+    else if (G.pan) { G.view.x = ev.clientX - G.pan.x; G.view.y = ev.clientY - G.pan.y; }
+  });
+  listen("mouseup", function(){ if (G) { G.drag = null; G.pan = null; } });
+  // 窗口尺寸变化时重算画布，否则图会被拉伸/裁切
+  listen("resize", function(){
+    if (!G || G.cv !== cv) return;
+    const b = cv.parentElement.getBoundingClientRect();
+    const w = Math.max(320, b.width), h = Math.max(320, b.height);
+    if (Math.abs(w - G.W) < 2 && Math.abs(h - G.H) < 2) return;
+    G.W = w; G.H = h;
+    const dpr2 = window.devicePixelRatio || 1;
+    cv.width = w * dpr2; cv.height = h * dpr2;
+    ctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
+    fitGraph();
+  });
+  cv.addEventListener("wheel", function(ev){
+    ev.preventDefault();
+    const r = cv.getBoundingClientRect();
+    const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    const k2 = Math.max(.25, Math.min(4, G.view.k * (ev.deltaY < 0 ? 1.1 : 0.9)));
+    G.view.x = mx - (mx - G.view.x) * (k2 / G.view.k);
+    G.view.y = my - (my - G.view.y) * (k2 / G.view.k);
+    G.view.k = k2;
+  }, {passive: false});
+
+  fitGraph();
+}
+
+function fitGraph(){
+  if (!G || !G.nodes.length) return;
+  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+  G.nodes.forEach(function(n){
+    if (n.x < minx) minx = n.x;
+    if (n.x > maxx) maxx = n.x;
+    if (n.y < miny) miny = n.y;
+    if (n.y > maxy) maxy = n.y;
+  });
+  const pad = 46;
+  const k = Math.min((G.W - pad*2)/Math.max(1, maxx-minx),
+                     (G.H - pad*2)/Math.max(1, maxy-miny), 2.2);
+  G.view.k = Math.max(.25, k);
+  G.view.x = G.W/2 - (minx+maxx)/2 * G.view.k;
+  G.view.y = G.H/2 - (miny+maxy)/2 * G.view.k;
+}
+
+async function showNode(key){
+  const box = document.getElementById("graphNode");
+  box.innerHTML = '<div class="card"><div class="body"><div class="empty">读取节点…</div></div></div>';
+  const d = await get("/graph/node?key=" + encodeURIComponent(key));
+  if (d.error) {
+    box.innerHTML = '<div class="card"><div class="body"><div class="empty">'
+      + esc(d.error) + '</div></div></div>';
+    return;
+  }
+  const n = d.node, meta = n.meta || {};
+  const nb = (d.neighbors||[]).map(function(x){
+    const c = (typeof x.confidence === "number") ? x.confidence.toFixed(2) : x.confidence;
+    return '<tr><td><span class="tag">' + esc(x.relation) + '</span></td>'
+      + '<td><span class="tag ' + esc(x.type) + '">' + esc(x.value) + '</span></td>'
+      + '<td class="num">' + esc(c) + '</td></tr>';
+  }).join("") || '<tr><td colspan="3" class="empty">没有邻居</td></tr>';
+  const en = (d.entries||[]).map(function(e){
+    return '<tr><td><span class="tag ' + esc(e.type) + '">' + esc(e.type) + '</span></td>'
+      + '<td>' + esc(e.content.slice(0,180)) + '</td></tr>';
+  }).join("") || '<tr><td colspan="2" class="empty">没有条目</td></tr>';
+  box.innerHTML =
+    '<div class="card"><h2>节点详情'
+    + '<span class="tag ' + esc(n.type) + '">' + esc(n.type) + '</span>'
+    + '<span class="mono" style="font-size:12px">' + esc(n.value) + '</span>'
+    + '<span class="hint">邻域 ' + d.neighborhood_size + ' 个节点</span></h2>'
+    + '<div class="body"><div class="split"><div>'
+    + '<div class="hint" style="margin-bottom:6px">邻居（' + (d.neighbors||[]).length + '）</div>'
+    + '<div class="scroll" style="max-height:300px"><table>'
+    + '<thead><tr><th>关系</th><th>节点</th><th class="num">置信度</th></tr></thead><tbody>'
+    + nb + '</tbody></table></div></div><div>'
+    + '<div class="hint" style="margin-bottom:6px">关联条目（' + (d.entries||[]).length + '）</div>'
+    + '<div class="scroll" style="max-height:300px"><table>'
+    + '<thead><tr><th>类型</th><th>内容</th></tr></thead><tbody>'
+    + en + '</tbody></table></div></div></div>'
+    + (Object.keys(meta).length
+        ? '<div class="hint" style="margin:12px 0 6px">节点元数据</div>'
+          + jpre(meta)
+        : "")
+    + '</div></div>';
+}
+
+/* ── 注意力 ── */
+LOADERS.attention = async function(el){
+  await ensureSessions();
+  const d = await get("/attention");
+  const rows = d.rows || [], cfg = d.config || {}, j = d.judge || {};
+  const jrows = Object.keys(j).map(function(k){
+    const v = j[k];
+    return kv(k, (typeof v === "object") ? JSON.stringify(v).slice(0,40) : v);
+  });
+  const table = rows.map(function(r){
+    const pct = Math.min(100, (r.probability||0)*100);
+    return '<tr><td class="mono" style="font-size:11.5px" title="' + esc(r.umo) + '">'
+      + esc(sessLabel(r.umo)) + '</td>'
+      + '<td class="num"><b>' + esc(r.probability) + '</b>'
+      + '<div class="bar" style="margin-top:4px;width:74px">'
+      + '<i style="--w:' + pct + '%"></i></div></td>'
+      + '<td class="num">' + esc(r.base) + '</td>'
+      + '<td class="num">' + esc(r.boosts) + '</td>'
+      + '<td class="num">' + esc(r.backoff) + '</td>'
+      + '<td class="num">' + esc(r.time_multiplier) + '</td>'
+      + '<td class="num">' + esc(r.read_air) + '</td>'
+      + '<td class="num">' + esc(r.soft_misses) + '</td>'
+      + '<td>' + (r.in_cooldown
+          ? '<span class="tag fact">冷却中</span>'
+          : '<span class="tag person">可接话</span>')
+      + ' <span class="hint">' + esc(r.idle_minutes) + ' 分钟无互动</span></td>'
+      + '<td><button data-umo="' + esc(r.umo) + '" class="br"'
+      + ' title="把该会话的注意力加成、退避与冷却全部清零">重置</button></td></tr>';
+  }).join("");
+  el.innerHTML =
+    '<div class="card"><h2>注意力配置'
+    + '<span class="hint">概率 = (基础概率 + 加成) × 退避 × 时段 × 读空气，上限为 active_cap</span></h2>'
+    + '<div class="body">' + kvGrid([
+        ["基础概率", cfg.bubble_base], ["概率上限", cfg.active_cap],
+        ["衰减尺度(分)", cfg.decay_minutes], ["@ 加成", cfg.hard_trigger_boost],
+        ["冷却(秒)", cfg.cool_down_seconds], ["会话数", cfg.sessions],
+      ]) + '</div></div>'
+    + '<div class="card"><h2>各会话当前概率'
+    + '<span class="hint">点「重置」会把该会话的加成、退避、冷却全部清零</span></h2>'
+    + '<div class="body tight"><div class="scroll">'
+    + (rows.length
+        ? '<table><thead><tr><th>会话</th><th class="num">当前概率</th><th class="num">基础</th>'
+          + '<th class="num">加成</th><th class="num">退避</th><th class="num">时段</th>'
+          + '<th class="num">读空气</th><th class="num">落空</th><th>状态</th><th></th></tr></thead>'
+          + '<tbody>' + table + '</tbody></table>'
+        : '<div class="empty">还没有任何会话的注意力状态（群里来过消息才会有）</div>')
+    + '</div></div></div>'
+    + '<div class="card"><h2>不回复判定'
+    + '<span class="hint">判定失败一律 fail-open（照常回复），所以判定不可用不会导致它不理人</span></h2>'
+    + '<div class="body"><div class="grid">' + jrows.join("") + '</div></div></div>';
+
+  el.querySelectorAll(".br").forEach(function(b){
+    b.addEventListener("click", function(){
+      busy(b, async function(){
+        await post("/attention/reset", {umo: b.dataset.umo});
+        toast("已重置 " + sessLabel(b.dataset.umo));
+        await refresh();
+      });
+    });
+  });
+};
+
+/* ── 交互 ── */
+LOADERS.interactions = async function(el){
+  const d = await get("/interactions");
+  const c = d.config || {};
+  // 分段提示词编辑器：依赖插件新代码，没重载会 404，给降级提示
+  let sp = null;
+  try { sp = await get("/segment-prompts"); } catch (e) { sp = null; }
+  const SEG_LABELS = {
+    "private_plain": "私聊 · 纯信息",
+    "private_narrative": "私聊 · 剧情向",
+    "group_plain": "群聊 · 纯信息",
+    "group_narrative": "群聊 · 剧情向",
+  };
+  const cfgCards = Object.keys(c).map(function(k){
+    return '<div class="kv"><div class="k">' + esc(k) + '</div>'
+      + '<div class="v"><span class="pill ' + (c[k] ? "on" : "off") + '">'
+      + (c[k] ? "启用" : "关闭") + '</span></div></div>';
+  }).join("");
+  // 子系统统计：友好键值渲染，不再倒裸 JSON
+  const SUBS = [
+    ["戳一戳", d.poke], ["连发合并", d.merge],
+    ["撤回取消", d.recall], ["语音合成", d.tts],
+    ["分段子代理", d.segment], ["流式传输", d.stream],
+    ["事件模板", d.templates],
+  ];
+  const subCards = SUBS.map(function(s){
+    return '<div class="card" style="animation-delay:0s"><h2 style="border-radius:14px 14px 0 0">'
+      + esc(s[0]) + '</h2><div class="body">'
+      + (s[1] && typeof s[1] === "object" && !s[1].error
+          ? kvObj(s[1]) : '<div class="empty">（无数据）</div>')
+      + '</div></div>';
+  }).join("");
+  const spHtml = (sp && sp.prompts)
+    ? '<div class="card"><h2>分段提示词（可编辑）'
+      + '<span class="hint">私聊/群聊 × 纯信息/剧情向共四份。直接改，保存后立即生效。'
+      + '占位符 {format_spec_block}（私聊）与 {min_segment}（群聊）由系统自动替换，别删。'
+      + '剧情向默认规则：括号描写与台词分开成段、说的话不细拆</span>'
+      + (sp.active === false
+          ? '<span class="pill off" title="流式传输开着时子代理整体停用：文本边流边切，等不了 LLM 分段。'
+            + '下面四份提示词仍然可以编辑保存，关掉流式传输后立即生效">'
+            + '流式传输已开启 —— 当前不生效</span>'
+          : '')
+      + '</h2>'
+      + '<div class="body tight"><div class="scroll fill-h2">'
+      + Object.keys(sp.prompts).map(function(k){
+          const it = sp.prompts[k];
+          return '<label class="f" style="margin-bottom:12px;display:block"><span>'
+            + esc(SEG_LABELS[k] || k)
+            + (it.customized ? ' <span class="pill off">已自定义</span>'
+                             : ' <span class="pill on">默认</span>')
+            + '<span class="spacer"></span>'
+            + '<button class="danger sp-reset" data-key="' + esc(k) + '"'
+            + ' title="恢复这份提示词的内置默认">恢复默认</button></span>'
+            + '<textarea class="sp-text" data-key="' + esc(k) + '" rows="7"'
+            + ' style="font-family:monospace;font-size:12px">'
+            + esc(it.current) + '</textarea></label>';
+        }).join("")
+      + '<div><button class="primary sp-save-all"'
+      + ' title="把上面四份内容全部写入覆盖（未改的也会写）">保存全部</button></div>'
+      + '</div></div></div>'
+    : '<div class="card"><h2>分段提示词（可编辑）<span class="hint">接口不可用 —— '
+      + '插件代码已更新但未重载，请到 AstrBot 插件管理「重载」后刷新本页</span></h2></div>';
+  el.innerHTML =
+    '<div class="card"><h2>功能开关'
+    + '<span class="hint">这里是运行时的实际值；要改请去插件的配置文件页</span></h2>'
+    + '<div class="body"><div class="grid">' + cfgCards + '</div></div></div>'
+    + '<div class="card"><h2>分段子代理试跑'
+    + '<span class="hint">输入一段回复，看子代理怎么切、有没有被内容守恒校验拦下而回退本地规则</span></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>待分段文本</span>'
+    + '<input id="segText" placeholder="如 第一句话。第二句话。第三句话。"></label>'
+    + '<label class="f fix" style="flex:0 0 120px"><span>场景</span>'
+    + '<select id="segPriv"><option value="1">私聊</option><option value="0">群聊</option></select></label>'
+    + '<label class="f fix" style="flex:0 0 130px"><span>发言模式</span>'
+    + '<select id="segMode"><option value="1">剧情向</option><option value="2">纯信息</option></select></label>'
+    + '<div class="fix"><button class="primary" id="btnSeg"'
+    + ' title="调用分段子代理并对比本地兜底规则">试跑</button></div>'
+    + '</div><div id="segOut"></div></div></div>'
+    + spHtml
+    + '<div class="split" style="gap:10px">' + subCards + '</div>';
+
+  on("btnSeg", "click", function(e){
+    busy(e.target, async function(){
+      const text = val("segText").trim();
+      if (!text) throw new Error("请先输入待分段文本");
+      const d2 = await post("/segment/test", {
+        text: text, is_private: val("segPriv") === "1",
+        msg_mode: +val("segMode") || 1});
+      const fmt = function(arr){
+        return (arr||[]).map(function(s, i){ return "第" + (i+1) + "段：" + s; }).join("\n") || "（空）";
+      };
+      const send = (d2.will_send||[]).map(function(s, i){ return (i+1) + ". " + s; }).join("\n");
+      document.getElementById("segOut").innerHTML =
+        '<div class="split" style="margin-top:12px"><div>'
+        + '<div class="hint" style="margin-bottom:6px">子代理'
+        + (d2.used_agent ? "" : "（未采用，已回退）") + '</div>'
+        + '<pre class="out">' + esc(fmt(d2.agent)) + '</pre></div><div>'
+        + '<div class="hint" style="margin-bottom:6px">本地兜底规则</div>'
+        + '<pre class="out">' + esc(fmt(d2.local_fallback)) + '</pre></div></div>'
+        + '<div class="hint" style="margin:12px 0 6px">实际会发出去的内容</div>'
+        + '<pre class="out">' + esc(send) + '</pre>'
+        + '<div class="hint" style="margin:12px 0 6px">子代理计数</div>'
+        + kvObj(d2.stats);
+    });
+  });
+  // 分段提示词：保存全部 / 单份恢复默认
+  el.querySelectorAll(".sp-reset").forEach(function(btn){
+    btn.addEventListener("click", async function(e){
+      try {
+        const k = btn.getAttribute("data-key");
+        if (!(await askConfirm("恢复「" + (SEG_LABELS[k] || k)
+            + "」提示词的内置默认？"))) return;
+        await post("/segment-prompts/reset", {key: k});
+        toast("已恢复「" + (SEG_LABELS[k] || k) + "」默认");
+        await LOADERS.interactions(el);
+      } catch (err) {
+        toast(err && err.message ? err.message : String(err), true);
+      }
+    });
+  });
+  const saveAll = el.querySelector(".sp-save-all");
+  if (saveAll) saveAll.addEventListener("click", async function(e){
+    try {
+      const items = [];
+      el.querySelectorAll(".sp-text").forEach(function(ta){
+        items.push({key: ta.getAttribute("data-key"), text: ta.value});
+      });
+      for (const it of items) {
+        await post("/segment-prompts/set", {key: it.key, text: it.text});
+      }
+      toast("已保存 " + items.length + " 份分段提示词");
+      await LOADERS.interactions(el);
+    } catch (err) {
+      toast(err && err.message ? err.message : String(err), true);
+    }
+  });
+};
+
+/* ── 主动消息 ── */
+LOADERS.proactive = async function(el){
+  await ensureSessions();
+  const d = await get("/proactive");
+  const c = d.config || {};
+  const rep = d.report || {};
+  const cands = d.candidates || [];
+  const acts = d.activity || {};
+  const actErr = acts.error ? String(acts.error) : "";
+  // `ovs` 必须在 actRows 之前定义 —— 渲染活跃度表时要按会话取静默上限，
+  // 写成下面（actRows 之后）会踩 const 的 TDZ，页面直接白屏。
+  const ovs = (d.overrides instanceof Object && !(d.overrides || {}).error)
+    ? (d.overrides || {}) : {};
+  const actRows = Object.keys(acts).filter(function(k){ return k !== "error"; })
+    .map(function(u){
+      const a = acts[u] || {};
+      // 静默连发：自最近一条用户消息以来发了几条 / 当前会话的上限。
+      // 打满就是它现在闭嘴的原因（群里一直没人说话）—— 直接标出来，
+      // 免得用户以为"设置好了不生效"。
+      const ovU = ovs[u] || {};
+      const smU = (ovU.silent_max != null) ? +ovU.silent_max
+                                           : +num(c.silent_max, 2);
+      const st = +num(a.silent_streak, 0);
+      const stFull = smU > 0 && st >= smU;
+      const stCell = smU > 0
+        ? '<span class="pill ' + (stFull ? "off" : "on") + '">'
+          + st + " / " + smU + (stFull ? "　已暂停" : "") + '</span>'
+        : '<span class="hint">不限制</span>';
+      return '<tr><td class="mono" style="font-size:11.5px" title="' + esc(u) + '">'
+        + '<span class="tag topic" style="font-size:11px;font-family:inherit">'
+        + esc(sessLabel(u)) + '</span></td>'
+        + '<td class="hint mono" style="font-size:11px">' + esc(a.persona || "—") + '</td>'
+        + '<td>' + esc(a.last_user_ts ? ago(a.last_user_ts) : "从未") + '</td>'
+        + '<td>' + esc(a.last_proactive_ts ? ago(a.last_proactive_ts) : "从未") + '</td>'
+        + '<td style="white-space:nowrap">' + stCell + '</td>'
+        + '<td>' + esc(a.failures) + '</td></tr>';
+    }).join("");
+  const eff = (d.effective instanceof Object) ? d.effective : {};
+  const sessOn = Number(eff.sessions_on || 0);
+  // 账本里已失真的键（假会话/已删会话）不计入活跃度表，只在总览页清理
+  const staleProLen = Array.isArray(d.stale_proactive) ? d.stale_proactive.length : 0;
+  // 全局开关只负责**放行**，会话是逐会话 opt-in 的。两种"看着配好了其实不会出话"
+  // 的情况必须当场讲清楚，否则用户改半天只会以为功能坏了：
+  //   ① 没放行 → 会话开得再多也不出话；② 放行了但一个会话都没开 → 谁都不出话。
+  let gateWarn = "";
+  if (!eff.global) {
+    gateWarn = '<div class="card" style="border-color:rgba(255,200,87,.4)"><h2>未放行'
+      + '<span class="hint">「配置」页签里的「启用主动消息」关着 —— 整个功能停，'
+      + (sessOn ? '下面那 ' + sessOn + ' 个「开启」的会话也不会出话。'
+                : '分会话配置一律不作数。')
+      + '要让主动消息跑起来，先去「配置」页签把它打开。</span></h2>'
+      + '<div class="body"></div></div>';
+  } else if (sessOn === 0) {
+    gateWarn = '<div class="card" style="border-color:rgba(255,200,87,.4)"><h2>还没有会话开启'
+      + '<span class="hint">全局开关打开只代表**放行**，它不会替任何会话开口 —— '
+      + '主动消息是逐会话 opt-in 的。请在下面「分会话配置」的表尾一行选好会话、'
+      + '「开关」保持「开启」，再点「添加覆盖」。</span></h2>'
+      + '<div class="body"></div></div>';
+  }
+  // 全局参考值：占位符提示「继承全局时实际会用的值」
+  const G = {min: num(c.min_interval, 45), idle: num(c.idle_minutes, 90),
+             silent: num(c.silent_max, 2), quiet: c.quiet || ""};
+  // 会话级「开关」只有开/关两种：opt-in 下"没设过"和"关掉"效果一样
+  // （都不出话），多给一个「继承」只会让人以为继承之后会跟着全局变成开。
+  function poEnOpts(sel){
+    return '<option value="1"' + (sel === "1" ? ' selected' : '') + '>开启</option>'
+      + '<option value="0"' + (sel !== "1" ? ' selected' : '') + '>关闭</option>';
+  }
+  el.innerHTML =
+    gateWarn
+    + '<div class="card"><h2>调度配置'
+    + '<span class="hint">全局开关只负责放行；谁开口由下面的「分会话配置」逐会话决定</span></h2>'
+    + '<div class="body">' + kvGrid([
+        ["全局开关", c.enabled ? "已放行" : "未放行"],
+        ["调度循环", eff.running ? "运行中" : "未运行"],
+        ["已开启会话", sessOn + " 个"],
+        ["静默连发上限", (G.silent > 0 ? G.silent + " 条" : "不限制")],
+        ["免打扰", c.quiet || "未设置"],
+        ["最小间隔(分)", c.min_interval], ["空闲阈值(分)", c.idle_minutes],
+      ]) + '</div></div>'
+    + '<div class="card"><h2>调度状态'
+    + '<span class="hint">调度器心跳与累计计数</span></h2>'
+    + '<div class="body">' + kvObj(rep) + '</div></div>'
+    + '<div class="card"><h2>下次候选'
+    + '<span class="hint">此刻满足全部条件、下一轮会主动开口的会话</span></h2>'
+    + '<div class="body">'
+    + (cands.length
+        ? cands.map(function(u){
+            return '<span class="tag topic mono" style="font-size:11px" title="' + esc(u) + '">'
+              + esc(sessLabel(u)) + '</span>';
+          }).join("")
+        : '<div class="empty">当前没有候选会话（未开启 / 冷却 / 免打扰 / 未达空闲阈值）</div>')
+    + '</div></div>'
+    + '<div class="card"><h2>分会话配置（内联编辑）'
+    + '<span class="hint">**主动消息是逐会话 opt-in 的**：只有这里「开关」为「开启」的'
+    + '会话才会开口，没在这里出现过的会话一律不开口（全局开关只负责放行）。'
+    + '每行 = 一个会话，直接改单元格后点「保存」即生效；'
+    + '「间隔/空闲/静默上限/免打扰」留空 = 继承全局（占位符显示全局值）。'
+    + '表尾一行可添加新会话</span></h2>'
+    + '<div class="body tight"><div id="poBox"></div></div></div>'
+    + '<div class="card"><h2>各会话活跃度'
+    + '<span class="hint">主动消息按「最近用户消息时间」判断会话是否空闲；'
+    + '「静默连发」= 自群里最后一条用户消息以来 bot 连发了几条 / 上限，'
+    + '打满就暂停（群里有人说话即归零）。'
+    + '只列真会话（有状态文件的），账本里已失效的键在「总览」页的残留数据里清理'
+    + (staleProLen ? ' —— 当前有 ' + staleProLen + ' 条待清理' : '') + '</span></h2>'
+    + '<div class="body tight"><div class="scroll"><table>'
+    + '<thead><tr><th>会话</th><th>人格</th><th>最近用户消息</th>'
+    + '<th>最近主动</th><th>静默连发</th><th class="num">失败次数</th></tr></thead><tbody>'
+    + (actErr
+        ? '<tr><td colspan="6" class="empty">' + esc(actErr) + '</td></tr>'
+        : (actRows || '<tr><td colspan="6" class="empty">还没有任何会话活跃记录</td></tr>'))
+    + '</tbody></table></div></div></div>';
+  countUpAll(el);
+
+  function poOverRowHtml(u, ov){
+    const ovv = ov || {};
+    // opt-in：「开关」只有开/关，没设过（旧数据 / 只用来存参数的行使）算关闭
+    const en = ovv.enabled ? "1" : "0";
+    const min = ovv.min_interval_min != null ? ovv.min_interval_min : "";
+    const idle = ovv.idle_threshold_min != null ? ovv.idle_threshold_min : "";
+    const sl = ovv.silent_max != null ? ovv.silent_max : "";
+    const quiet = ovv.quiet_hours != null ? ovv.quiet_hours : "";
+    return '<tr data-umo="' + esc(u) + '">'
+      + '<td class="mono" style="font-size:11.5px" title="' + esc(u) + '">'
+      + esc(sessLabel(u)) + '</td>'
+      + '<td><select class="po-en">' + poEnOpts(en) + '</select></td>'
+      + '<td><input type="number" class="po-min" min="1" step="1" value="' + esc(min)
+      + '" placeholder="全局 ' + G.min + '"></td>'
+      + '<td><input type="number" class="po-idle" min="1" step="1" value="' + esc(idle)
+      + '" placeholder="全局 ' + G.idle + '"></td>'
+      + '<td><input type="number" class="po-silent" min="0" step="1"'
+      + ' title="群里一直没人说话时，最多连发几条就暂停；0 = 不限制"'
+      + ' value="' + esc(sl) + '" placeholder="全局 ' + G.silent + '"></td>'
+      + '<td><input type="text" class="po-quiet" value="' + esc(quiet)
+      + '" placeholder="全局 ' + esc(G.quiet) + '"></td>'
+      + '<td style="white-space:nowrap"><button class="primary po-save"'
+      + ' title="保存该会话的覆盖并立即生效">保存</button> '
+      + '<button class="danger po-clear" title="清除该会话覆盖，恢复全局配置">清除</button></td></tr>';
+  }
+  function poAddRowHtml(){
+    const opts = SESSIONS.sessions.map(function(s){
+      return '<option value="' + esc(s.umo) + '">' + esc(sessLabel(s.umo)) + '</option>';
+    }).join("") || '<option value="">（无会话）</option>';
+    return '<tr class="po-add">'
+      + '<td><select class="po-add-sess">' + opts + '</select></td>'
+      // 添加行默认「开启」：用户选会话 → 点「添加覆盖」就是想让它开口
+      // （这是 opt-in 的唯一入口，多一步"改成开启"没必要）
+      + '<td><select class="po-en">' + poEnOpts("1") + '</select></td>'
+      + '<td><input type="number" class="po-min" min="1" step="1" placeholder="全局 ' + G.min + '"></td>'
+      + '<td><input type="number" class="po-idle" min="1" step="1" placeholder="全局 ' + G.idle + '"></td>'
+      + '<td><input type="number" class="po-silent" min="0" step="1" title="群里一直没人说话时，最多连发几条就暂停；0 = 不限制" placeholder="全局 ' + G.silent + '"></td>'
+      + '<td><input type="text" class="po-quiet" placeholder="全局 ' + esc(G.quiet) + '"></td>'
+      + '<td><button class="primary po-add-btn" title="为所选会话添加覆盖">添加覆盖</button></td></tr>';
+  }
+  function poTableHtml(ovMap){
+    const rows = Object.keys(ovMap).map(function(u){
+      return poOverRowHtml(u, ovMap[u]);
+    }).join("");
+    return '<table id="poTable"><thead><tr><th>会话</th><th>开关</th>'
+      + '<th style="width:88px">间隔(分)</th><th style="width:88px">空闲(分)</th>'
+      + '<th style="width:88px">静默上限</th>'
+      + '<th>免打扰时段</th><th>操作</th></tr></thead>'
+      + '<tbody>' + (rows || '<tr><td colspan="7" class="empty">'
+          + '还没有任何会话开启主动消息 —— 未列在这里的会话一律不会主动开口</td></tr>')
+      + poAddRowHtml() + '</tbody></table>';
+  }
+  function readPoRow(trEl){
+    const v = {};
+    // 开关必须**显式**带上：opt-in 下"没开启"就是关闭，留空会让服务端
+    // 沿用旧值，出现"我明明改了却没生效"。
+    const enEl = trEl.querySelector(".po-en");
+    v.enabled = !!(enEl && enEl.value === "1");
+    const num = function(cls, key){
+      const el = trEl.querySelector(cls);
+      if (el && el.value !== "") v[key] = +el.value;
+    };
+    num(".po-min", "min_interval_min");
+    num(".po-idle", "idle_threshold_min");
+    num(".po-silent", "silent_max");
+    const q = trEl.querySelector(".po-quiet");
+    if (q && q.value.trim() !== "") v.quiet_hours = q.value.trim();
+    return v;
+  }
+  function renderPoBox(ovMap){
+    const box = document.getElementById("poBox");
+    if (box) box.innerHTML = poTableHtml(ovMap);
+  }
+  // —— 只更新受影响的行，避免把其它行未保存的编辑冲掉 ——
+  function poRowSel(u){
+    return 'tr[data-umo="' + String(u).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"]';
+  }
+  function poUpdateRow(u, ov){
+    const box = document.getElementById("poBox");
+    if (!box) return;
+    const tbody = box.querySelector("tbody");
+    const wrap = document.createElement("tbody");
+    wrap.innerHTML = poOverRowHtml(u, ov);
+    const newTr = wrap.firstElementChild;
+    const old = box.querySelector(poRowSel(u));
+    const addTr = box.querySelector("tr.po-add");
+    if (old) old.replaceWith(newTr);
+    else tbody.insertBefore(newTr, addTr);     // 新会话：插到「添加」行之前
+  }
+  function poRemoveRow(u){
+    const box = document.getElementById("poBox");
+    if (!box) return;
+    const old = box.querySelector(poRowSel(u));
+    if (old) old.remove();
+  }
+  renderPoBox(ovs);
+  // 事件委托：poBox 元素常驻，innerHTML 重建后依然有效
+  const poBox = document.getElementById("poBox");
+  if (poBox) poBox.addEventListener("click", function(ev){
+    const btn = ev.target.closest("button");
+    if (!btn) return;
+    const tr = btn.closest("tr[data-umo]");
+    busy(btn, async function(){
+      if (btn.classList.contains("po-clear")) {
+        const u = tr.getAttribute("data-umo");
+        if (!(await askConfirm("清除「" + sessLabel(u) + "」的分会话配置？"
+            + "清除后该会话不再主动开口（主动消息是逐会话开启的）。"))) return;
+        await post("/proactive/override/clear", {umo: u});
+        toast("已清除「" + sessLabel(u) + "」的分会话配置");
+        poRemoveRow(u);                        // 只移走这一行
+      } else if (btn.classList.contains("po-save")) {
+        const u = tr.getAttribute("data-umo");
+        const values = readPoRow(tr);
+        const r = await post("/proactive/override", {umo: u, values: values});
+        toast(values.enabled ? ("已保存「" + sessLabel(u) + "」的配置（开启）")
+                             : ("已保存「" + sessLabel(u) + "」的配置（关闭）"));
+        poUpdateRow(u, r.overrides[u] || {});  // 只重建这一行（服务端归一化值）
+      } else if (btn.classList.contains("po-add-btn")) {
+        const addTr = btn.closest("tr.po-add");
+        const sel = addTr.querySelector(".po-add-sess");
+        const u = sel && sel.value;
+        if (!u) throw new Error("请先选择要添加的会话");
+        // readPoRow 一定带上 enabled（添加行默认「开启」）—— 选会话即可开启
+        const values = readPoRow(addTr);
+        const r = await post("/proactive/override", {umo: u, values: values});
+        toast(values.enabled ? ("已开启「" + sessLabel(u) + "」的主动消息")
+                             : ("已为「" + sessLabel(u) + "」保存配置（关闭）"));
+        poUpdateRow(u, r.overrides[u] || {});  // 只插入/更新这一行
+      }
+    });
+  });
+};
+
+/* ── 会话设置（发言模式 + 额外规则） ── */
+LOADERS["session-params"] = async function(el){
+  await ensureSessions();
+  const d = await get("/session-params");
+  // 分会话特权接口依赖插件新代码：没重载会 404，不能让整个页签一起白屏
+  let pr = null;
+  try { pr = await get("/session-privileges"); } catch (e) { pr = null; }
+  // 多人格同台接口同样依赖插件新代码：404 时只让这张卡降级，不白屏
+  let cs = null;
+  try { cs = await get("/costars"); } catch (e) { cs = null; }
+  const modes = d.modes || [];
+  const rulesDef = d.rules || [];
+  const rows = d.rows || [];
+  const byUmo = {};
+  rows.forEach(function(r){ byUmo[r.umo] = r; });
+
+  function modeOpts(ov, priv){
+    const cur = ov && ov.mode != null ? String(ov.mode) : "";
+    const inherit = priv ? "继承（全局设置）" : "继承（纯信息）";
+    return '<option value="">' + inherit + '</option>'
+      + modes.map(function(m){
+        return '<option value="' + m.id + '"' + (cur === String(m.id) ? ' selected' : '')
+          + '>' + esc(m.label) + '</option>';
+      }).join("");
+  }
+  function ruleBoxes(ov){
+    const checked = (ov && ov.rules) || [];
+    return rulesDef.map(function(rd){
+      return '<label class="chk" style="margin-right:8px"><input type="checkbox" '
+        + 'class="sp-rule" value="' + esc(rd.id) + '"'
+        + (checked.indexOf(rd.id) >= 0 ? ' checked' : '')
+        + '> ' + esc(rd.label) + '</label>';
+    }).join("") || '<span class="hint">（无可用规则）</span>';
+  }
+  function rowHtml(u, row){
+    const ov = row.override || {};
+    const r = row.resolve || {};
+    return '<tr data-umo="' + esc(u) + '">'
+      + '<td class="mono" style="font-size:11.5px" title="' + esc(u) + '">' + esc(sessLabel(u)) + '</td>'
+      + '<td>' + (row.is_private ? "私聊" : "群聊") + '</td>'
+      + '<td><select class="sp-mode">' + modeOpts(ov, row.is_private) + '</select></td>'
+      + '<td class="sp-rules">' + ruleBoxes(ov) + '</td>'
+      + '<td class="hint" style="font-size:11px">' + esc(r.mode_label || "—")
+      + ' · ' + (r.nsfw ? "NSFW 开" : "NSFW 关") + '</td>'
+      + '<td style="white-space:nowrap"><button class="danger sp-clear"'
+      + ' title="清除该会话覆盖，恢复会话类型默认">清除</button></td></tr>';
+  }
+  function addRowHtml(){
+    const opts = SESSIONS.sessions.map(function(s){
+      return '<option value="' + esc(s.umo) + '">' + esc(sessLabel(s.umo)) + '</option>';
+    }).join("") || '<option value="">（无会话）</option>';
+    return '<tr class="sp-add">'
+      + '<td><select class="sp-add-sess">' + opts + '</select></td>'
+      + '<td class="hint">—</td>'
+      + '<td><select class="sp-mode">' + modeOpts(null, false) + '</select></td>'
+      + '<td>' + ruleBoxes(null) + '</td>'
+      + '<td class="hint">—</td>'
+      + '<td><button class="primary sp-add-btn"'
+      + ' title="为所选会话添加发言参数覆盖">添加设置</button></td></tr>';
+  }
+  function readRow(tr){
+    // 返回 {"mode":int, "rules":[..]}；两字段均无显式值时返回 null（=继承）
+    const v = {};
+    const m = tr.querySelector(".sp-mode");
+    if (m && m.value !== "") v.mode = +m.value;
+    const rules = [];
+    tr.querySelectorAll(".sp-rule:checked").forEach(function(c){ rules.push(c.value); });
+    if (rules.length) v.rules = rules;
+    return Object.keys(v).length ? v : null;
+  }
+  function rebuildRow(u, row){
+    const tr = el.querySelector('tr[data-umo="' + (u || "__none__") + '"]');
+    if (tr) tr.closest("tbody").replaceChild(
+      (function(){ const td = document.createElement("tbody");
+                   td.innerHTML = rowHtml(u, row); return td.firstChild; })(), tr);
+  }
+  const tableRows = rows.map(function(r){ return rowHtml(r.umo, r); }).join("");
+  /* 分会话特权卡片：全局名单 + 覆盖表 + 新增/修改 + 各会话生效总览 */
+  function prList(qs){
+    return (qs || []).map(function(q){
+      return '<span class="tag fact mono" style="font-size:11px">' + esc(q) + '</span>';
+    }).join("") || '<span class="hint">（无）</span>';
+  }
+  const prOv = (pr && pr.overrides) || {};
+  const prScopeOpts = ((pr && pr.platforms) || []).map(function(p){
+    return '<option value="' + esc(p) + '">' + esc(p) + '（整个平台）</option>';
+  }).join("")
+    + (SESSIONS.sessions || []).map(function(s){
+      return '<option value="' + esc(s.umo) + '">' + esc(sessLabel(s.umo))
+        + '</option>';
+    }).join("");
+  const prOvRows = Object.keys(prOv).map(function(scope){
+    return '<tr data-scope="' + esc(scope) + '">'
+      + '<td class="mono" style="font-size:11.5px" title="' + esc(scope) + '">'
+      + esc(scope) + '</td>'
+      + '<td>' + prList(prOv[scope]) + '</td>'
+      + '<td style="white-space:nowrap"><button class="danger pr-clear"'
+      + ' title="清除该范围的特权覆盖，回退全局名单">清除</button></td></tr>';
+  }).join("");
+  const prSessRows = ((pr && pr.rows) || []).map(function(r){
+    return '<tr><td class="mono" style="font-size:11.5px" title="' + esc(r.umo) + '">'
+      + esc(r.umo) + '</td><td>' + prList(r.effective)
+      + '<span class="hint" style="font-size:11px">（来源 '
+      + esc(r.source || "全局") + '）</span></td></tr>';
+  }).join("");
+  const prHtml = (pr
+    ? '<div class="card" style="margin-top:14px"><h2>特权用户（每实例一名）'
+      + '<span class="hint">每个实例（= 一个平台适配器 / 一个机器人 QQ 号）**只能有一名**特权用户，'
+      + '存在该实例自己的 config.json 的 <code>privilege_uid</code> 里。'
+      + '下面按实例设置，改 Sui 不会影响 Banyan。</span></h2><div class="body tight">'
+      + '<div class="hint" style="margin:8px 0 4px">设置某实例的特权用户</div>'
+      + '<div class="pr-add" style="display:flex;gap:6px;align-items:center;'
+      + 'flex-wrap:wrap"><input class="pr-scope" list="pr-scope-list"'
+      + ' style="width:280px" placeholder="实例 id，如 Banyan / Sui"> '
+      + '<datalist id="pr-scope-list">' + prScopeOpts + '</datalist>'
+      + '<input class="pr-qids" style="width:220px"'
+      + ' placeholder="特权 QQ（单个；留空=清除）"> '
+      + '<button class="primary pr-save" title="写入该实例的 privilege_uid">保存</button></div>'
+      + '<div class="hint" style="margin:8px 0 4px">各实例当前特权</div>'
+      + '<div class="scroll fill-h2"><table><thead><tr><th>实例</th>'
+      + '<th>特权用户</th></tr></thead><tbody>'
+      + (prSessRows || '<tr><td colspan="2" class="empty">还没有可配置的实例</td></tr>')
+      + '</tbody></table></div>'
+      + '</div></div>'
+    : '<div class="card" style="margin-top:14px;border-color:rgba(255,200,87,.4)">'
+      + '<h2>特权用户（每实例一名）<span class="hint">接口不可用 —— 插件代码已更新但未重载，'
+      + '请到 AstrBot 插件管理「重载」本插件后刷新本页</span></h2></div>');
+  /* 多人格同台卡片：只读展示 + 逐个人格「撤下」；增删主入口在 /persona cast 与模型工具 */
+  const csRows = ((cs && cs.rows) || []).map(function(r){
+    const cast = (r.costars || []).map(function(c){
+      return '<span class="tag fact" style="font-size:11px;margin:2px 4px 2px 0"'
+        + ' title="' + esc(c.id) + '">' + esc(c.name)
+        + '<button class="danger cs-rm bx" data-umo="' + esc(r.umo) + '"'
+        + ' data-pid="' + esc(c.id) + '" style="margin-left:5px"'
+        + ' title="把「' + esc(c.name) + '」移出该会话的同台">撤下</button></span>';
+    }).join("") || '<span class="hint">（无）</span>';
+    return '<tr data-umo="' + esc(r.umo) + '">'
+      + '<td class="mono" style="font-size:11.5px" title="' + esc(r.umo) + '">'
+      + esc(sessLabel(r.umo)) + '</td>'
+      + '<td>' + (r.is_private ? "私聊" : "群聊") + '</td>'
+      + '<td class="hint" style="font-size:11px">' + esc(r.mode_label || "—") + '</td>'
+      + '<td><span class="hint" style="font-size:11px">主角 </span>'
+      + esc(r.main_name || "—") + '</td>'
+      + '<td>' + cast + '</td>'
+      + '<td>' + (r.effective
+          ? '<span class="tag ok">生效中</span>'
+          : '<span class="hint" style="font-size:11px">未生效（需剧情模式）</span>')
+      + '</td></tr>';
+  }).join("");
+  const csHtml = (cs
+    ? '<div class="card" style="margin-top:14px"><h2>多人格同台'
+      + '<span class="hint">会话同时扮演多个角色；<b>仅剧情模式（括号描写）下生效</b>，'
+      + '上限 ' + esc(String(cs.max)) + ' 个副人格。增删用 /persona cast add|rm|clear、'
+      + '或模型工具 update_costars；副人格规则以 temp 注入，不落对话记录</span></h2>'
+      + '<div class="body tight"><div class="scroll fill-h2"><table>'
+      + '<thead><tr><th>会话</th><th>类型</th><th>发言模式</th><th>主角</th>'
+      + '<th>登场副人格</th><th>是否生效</th></tr></thead><tbody>'
+      + (csRows || '<tr><td colspan="6" class="empty">还没有会话开启多人格同台</td></tr>')
+      + '</tbody></table></div></div></div>'
+    : '<div class="card" style="margin-top:14px;border-color:rgba(255,200,87,.4)">'
+      + '<h2>多人格同台<span class="hint">接口不可用 —— 插件代码已更新但未重载，'
+      + '请到 AstrBot 插件管理「重载」本插件后刷新本页</span></h2></div>');
+  el.innerHTML =
+    '<div class="card"><h2>会话发言参数'
+    + '<span class="hint">发言模式：剧情向=括号描写/可换行；纯信息=同群聊格式。'
+    + '额外规则：NSFW（当前仅此一项，未来可扩展）。'
+    + '默认按会话类型：私聊=剧情向+NSFW 开，群聊=纯信息+NSFW 关；'
+    + '改动即保存生效（选「继承」= 恢复类型默认）</span></h2>'
+    + '<div class="body tight"><div class="scroll fill-h2"><table>'
+    + '<thead><tr><th>会话</th><th>类型</th><th>发言模式</th><th>额外规则</th>'
+    + '<th>实际生效</th><th>操作</th></tr></thead><tbody>'
+    + (tableRows || '<tr><td colspan="6" class="empty">还没有可配置的会话</td></tr>')
+    + addRowHtml()
+    + '</tbody></table></div></div></div>'
+    + prHtml
+    + csHtml;
+  countUpAll(el);
+
+  // 发言模式 / NSFW 改动即保存：改完直接落库并刷新「实际生效」列。
+  // 只有"新增覆盖"需要按钮（要先选会话）。
+  async function saveRow(tr){
+    const u = tr.getAttribute("data-umo");
+    if (!u) return;
+    const v = readRow(tr);
+    await post("/session-params/set", {umo: u, values: v || {}});
+    const d2 = await get("/session-params");
+    const nr = (d2.rows || []).filter(function(r){ return r.umo === u; })[0];
+    if (nr) {
+      byUmo[u] = nr;
+      const cell = tr.querySelector("td:nth-child(5)");
+      if (cell) cell.innerHTML = esc(nr.resolve && nr.resolve.mode_label || "—")
+        + " · " + (nr.resolve && nr.resolve.nsfw ? "NSFW 开" : "NSFW 关");
+    }
+    toast("已保存「" + sessLabel(u) + "」的发言参数");
+  }
+  el.querySelectorAll('tr[data-umo] .sp-mode, tr[data-umo] .sp-rule')
+    .forEach(function(inp){
+      inp.addEventListener("change", async function(e){
+        try { await saveRow(inp.closest("tr")); }
+        catch (err) { toast(err && err.message ? err.message : String(err), true); }
+      });
+    });
+
+  el.querySelectorAll("button").forEach(function(btn){
+    btn.addEventListener("click", async function(e){
+      try {
+        if (btn.classList.contains("sp-clear")) {
+          const u = btn.closest("tr").getAttribute("data-umo");
+          if (!(await askConfirm("清除「" + sessLabel(u) + "」的发言参数覆盖，恢复类型默认？"))) return;
+          await post("/session-params/clear", {umo: u});
+          toast("已清除「" + sessLabel(u) + "」的覆盖");
+          rebuildRow(u, byUmo[u]);
+        } else if (btn.classList.contains("sp-add-btn")) {
+          const addTr = btn.closest("tr.sp-add");
+          const sel = addTr.querySelector(".sp-add-sess");
+          const u = sel && sel.value;
+          if (!u) throw new Error("请先选择要添加的会话");
+          const v = readRow(addTr);
+          await post("/session-params/set", {umo: u, values: v || {}});
+          toast("已添加「" + sessLabel(u) + "」的发言参数");
+          const d2 = await get("/session-params");
+          const nr = (d2.rows || []).filter(function(r){ return r.umo === u; })[0];
+          if (nr) { byUmo[u] = nr; rebuildRow(u, nr); }
+        } else if (btn.classList.contains("pr-clear")) {
+          const scope = btn.closest("tr").getAttribute("data-scope");
+          if (!(await askConfirm("清除「" + scope + "」的特权覆盖，回退全局名单？"))) return;
+          await post("/session-privileges/clear", {scope: scope});
+          toast("已清除「" + scope + "」的特权覆盖");
+          await LOADERS["session-params"](el);
+        } else if (btn.classList.contains("pr-save")) {
+          const box = btn.closest(".pr-add");
+          const scope = box.querySelector(".pr-scope").value.trim();
+          if (!scope) throw new Error("请选择或输入作用范围（平台/平台:类型/精确UMO）");
+          const qids = (box.querySelector(".pr-qids").value || "")
+            .split(/[,，\s]+/).filter(Boolean);
+          await post("/session-privileges/set", {scope: scope, qids: qids});
+          toast("已保存「" + scope + "」的特权用户");
+          await LOADERS["session-params"](el);
+        } else if (btn.classList.contains("cs-rm")) {
+          const umo = btn.closest("tr").getAttribute("data-umo");
+          const pid = btn.getAttribute("data-pid");
+          if (!(await askConfirm("把该副人格移出「" + sessLabel(umo) + "」的多人格同台？"))) return;
+          await post("/costars/remove", {umo: umo, persona: pid});
+          toast("已撤下该副人格");
+          await LOADERS["session-params"](el);
+        }
+      } catch (err) {
+        toast(err && err.message ? err.message : String(err), true);
+      }
+    });
+  });
+};
+
+/* ── 记忆组 ── */
+LOADERS.groups = async function(el){
+  await ensureSessions();
+  const d = await get("/groups");
+  const g = d.groups || {};
+  const grouped = {};
+  Object.keys(g).forEach(function(name){
+    g[name].forEach(function(u){ grouped[u] = name; });
+  });
+  const opts = SESSIONS.sessions.map(function(s){
+    return '<option value="' + esc(s.umo) + '">' + esc(sessOptionText(s))
+      + (grouped[s.umo] ? "（已在组 " + esc(grouped[s.umo]) + "）" : "") + '</option>';
+  }).join("") || '<option value="">（无会话）</option>';
+  const sessDatalist = SESSIONS.sessions.map(function(s){
+    return '<option value="' + esc(s.umo) + '">' + esc(sessOptionText(s)) + '</option>';
+  }).join("");
+  const groupDatalist = Object.keys(g).map(function(name){
+    return '<option value="' + esc(name) + '">'; }).join("");
+  const groupRows = Object.keys(g).map(function(name){
+    const memberHtml = g[name].map(function(u){
+      return '<div style="display:flex;align-items:center;gap:6px;margin:2px 0">'
+        + '<span class="mono" style="font-size:11.5px;flex:1;min-width:0;'
+        + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(u) + '">'
+        + esc(sessLabel(u)) + '</span>'
+        + '<button class="danger bx" data-umo="' + esc(u) + '" data-grp="' + esc(name) + '"'
+        + ' title="把这个成员移出组 ' + esc(name) + '">移出</button></div>';
+    }).join("");
+    return '<tr><td style="vertical-align:top"><b>' + esc(name) + '</b><div class="hint">'
+      + g[name].length + ' 个成员</div>'
+      + '<button class="bx" data-rename="' + esc(name) + '" style="margin-top:6px"'
+      + ' title="重命名组 ' + esc(name) + '（保留全部成员）">重命名</button></td>'
+      + '<td>' + (memberHtml || '<span class="hint">（空）</span>') + '</td></tr>';
+  }).join("") || '<tr><td colspan="2" class="empty">还没有任何记忆组</td></tr>';
+  el.innerHTML =
+    '<div class="card"><h2>跨会话记忆组'
+    + '<span class="hint">归到同一组的会话共享同一份长期记忆。'
+    + '例如同一个人在 Banyan 和 Sui 两个适配器下，可以并成一组</span></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>会话</span><select id="grUmo" class="sess">' + opts + '</select></label>'
+    + '<label class="f"><span>组名（可下拉选现有组，或输入新组名）</span>'
+    + '<input id="grName" list="grNameList" placeholder="如 ADOFAI_Banyan">'
+    + '<datalist id="grNameList">' + groupDatalist + '</datalist></label>'
+    + '<div class="fix"><button class="primary" id="btnGrAssign"'
+    + ' title="把该会话归入指定组">归入组</button></div>'
+    + '<div class="fix"><button class="danger" id="btnGrRemove"'
+    + ' title="把该会话移出它所在的组">移出组</button></div>'
+    + '</div><div class="row">'
+    + '<label class="f"><span>合并：会话 A</span><input id="grA" list="grSessList" placeholder="umo A">'
+    + '<datalist id="grSessList">' + sessDatalist + '</datalist></label>'
+    + '<label class="f"><span>合并：会话 B</span><input id="grB" list="grSessList2" placeholder="umo B">'
+    + '<datalist id="grSessList2">' + sessDatalist + '</datalist></label>'
+    + '<div class="fix"><button id="btnGrMerge"'
+    + ' title="把两个会话并到同一个组（已有组则并入）">合并为一个组</button></div>'
+    + '</div></div></div>'
+    + '<div class="card"><h2>现有分组 '
+    + '<span class="hint">共 ' + esc((d.stats||{}).groups||0) + ' 组 / '
+    + esc((d.stats||{}).members||0) + ' 个会话 · 组名可重命名，成员可单独移出</span></h2>'
+    + '<div class="body tight"><div class="scroll fill-h2"><table>'
+    + '<thead><tr><th>组名</th><th>成员会话</th></tr></thead><tbody>'
+    + groupRows + '</tbody></table></div></div></div>'
+    + '<div class="card"><h2>未归组会话 '
+    + '<span class="hint">共 ' + (d.ungrouped||[]).length + ' 个</span></h2>'
+    + '<div class="body">'
+    + ((d.ungrouped||[]).map(function(u){
+        return '<span class="tag" style="font-size:11px" title="' + esc(u) + '">'
+          + esc(sessLabel(u)) + '</span>';
+      }).join("") || '<div class="empty">无</div>')
+    + '</div></div>';
+
+  on("btnGrAssign", "click", function(e){
+    busy(e.target, async function(){
+      const name = val("grName").trim();
+      if (!name) throw new Error("请先填组名");
+      await post("/groups/assign", {umo: val("grUmo"), group: name});
+      toast("已归入组 " + name);
+      await refresh();
+    });
+  });
+  on("btnGrRemove", "click", function(e){
+    busy(e.target, async function(){
+      await post("/groups/remove", {umo: val("grUmo")});
+      toast("已移出组");
+      await refresh();
+    });
+  });
+  on("btnGrMerge", "click", function(e){
+    busy(e.target, async function(){
+      const a = val("grA").trim(), b = val("grB").trim();
+      if (!a || !b) throw new Error("请填两个会话");
+      const r = await post("/groups/merge", {a: a, b: b});
+      toast("已合并为组 " + r.group);
+      await refresh();
+    });
+  });
+  // 表格里的行内操作：移出成员 / 重命名组（按钮是动态生成的，用委托绑定）
+  el.querySelectorAll(".bx").forEach(function(b){
+    b.addEventListener("click", function(){
+      busy(b, async function(){
+        if (b.dataset.umo) {
+          if (!(await askConfirm("确定把 " + b.dataset.umo + " 移出组 " + b.dataset.grp + "？"))) return;
+          await post("/groups/remove", {umo: b.dataset.umo});
+          toast("已把 " + b.dataset.umo + " 移出组");
+          await refresh();
+        } else if (b.dataset.rename) {
+          const nn = await askPrompt("重命名组 " + b.dataset.rename + " 为：", b.dataset.rename);
+          if (!nn || !nn.trim() || nn.trim() === b.dataset.rename) return;
+          const r = await post("/groups/rename", {old: b.dataset.rename, new: nn.trim()});
+          toast("已重命名为 " + r.group);
+          await refresh();
+        }
+      });
+    });
+  });
+};
+
+/* ── 装配预览 ── */
+LOADERS.preview = async function(el){
+  const ps = await get("/personas");
+  el.innerHTML =
+    '<div class="card"><h2>装配预览'
+    + '<span class="hint">场景（群聊/私聊）与发言模式（剧情向/纯信息）可自由组合；切换即自动重新生成。'
+    + '若你改过磁盘上的人格文件，先点右上角「重载人格数据」再看</span></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>人格</span><select id="pvPersona">'
+    + ps.personas.map(function(p){
+        return '<option value="' + esc(p.id) + '"'
+          + (p.id === CUR_PERSONA ? " selected" : "") + '>'
+          + esc(p.display_name) + '（' + esc(p.id) + '）</option>';
+      }).join("")
+    + '</select></label>'
+    + '<label class="f fix" style="flex:0 0 130px"><span>场景</span><select id="pvPriv">'
+    + '<option value="1">私聊</option>'
+    + '<option value="0" selected>群聊</option>'
+    + '</select></label>'
+    + '<label class="f fix" style="flex:0 0 170px"><span>发言模式</span><select id="pvMode">'
+    + '<option value="1" selected>剧情向（括号描写）</option>'
+    + '<option value="2">纯信息（无括号）</option>'
+    + '</select></label>'
+    + '<label class="f fix" style="flex:0 0 150px"><span>NSFW</span><select id="pvNsfw">'
+    + '<option value="">跟随全局</option>'
+    + '<option value="1">开启</option>'
+    + '<option value="0">关闭</option>'
+    + '</select></label>'
+    + '</div></div>'
+    + '<div class="body"><div class="duo">'
+    + '<div class="vlist" id="pvStats"></div>'
+    + '<div><div class="hint" style="margin-bottom:6px">稳定段（注入到 system_prompt，可被缓存）</div>'
+    + '<pre class="out" id="pvStable" style="max-height:calc(100dvh - 300px);min-height:280px">—</pre>'
+    + '</div></div></div></div>';
+
+  const rerun = function(){ loadPreview().catch(function(e){ toast(e.message, true); }); };
+  document.getElementById("pvPersona").addEventListener("change", function(){
+    CUR_PERSONA = val("pvPersona"); rerun();
+  });
+  document.getElementById("pvPriv").addEventListener("change", rerun);
+  document.getElementById("pvMode").addEventListener("change", rerun);
+  document.getElementById("pvNsfw").addEventListener("change", rerun);
+  await loadPreview();
+};
+
+async function loadPreview(){
+  const is_private = val("pvPriv") === "1";
+  const msg_mode = +val("pvMode") || 1;
+  const nsfw = val("pvNsfw");
+  const q = new URLSearchParams({
+    persona: val("pvPersona"),
+    is_private: is_private ? "1" : "0",
+    msg_mode: msg_mode,
+  });
+  // NSFW：跟随全局（空）时不带参数，由后端取 allow_erotic_content
+  if (nsfw === "1" || nsfw === "0") q.set("nsfw", nsfw);
+  const d = await get("/preview?" + q.toString());
+  if (d.error) throw new Error(d.error);
+  CUR_PERSONA = val("pvPersona");
+  const nsfwLabel = d.nsfw
+    ? '<span style="color:var(--ok);font-family:var(--sans);font-size:12.5px;font-weight:600">开启</span>'
+    : '<span style="color:var(--fg3);font-family:var(--sans);font-size:12.5px">关闭</span>';
+  document.getElementById("pvStats").innerHTML = kvCol([
+    ["NSFW 状态", nsfwLabel],
+    ["稳定段合计", bytes(d.stable_bytes)],
+    ["框架块（共用）", bytes(d.framework_bytes)],
+    ["人格自有", bytes(d.persona_bytes)],
+    ["L2 风格摘要", bytes(d.l2_bytes)],
+    ["旧形态", bytes(d.legacy_bytes)],
+    ["每轮省下", bytes(d.saved_bytes) + "（" + num(d.saved_pct) + "%）"],
+  ]);
+  document.getElementById("pvStable").textContent = d.stable_text || "—";
+}
+
+/* ── 自检 ── */
+LOADERS.doctor = async function(el){
+  const d = await get("/doctor");
+  const c = d.counts || {};
+  const rows = (d.issues||[]).map(function(i){
+    const cls = i.level === "error" ? "fact" : (i.level === "warn" ? "topic" : "person");
+    return '<tr><td><span class="tag ' + cls + '">' + esc(i.level) + '</span></td>'
+      + '<td class="mono" style="font-size:11.5px">' + esc(i.persona || "—") + '</td>'
+      + '<td class="mono" style="font-size:11.5px">' + esc(i.code) + '</td>'
+      + '<td>' + esc(i.message) + '</td></tr>';
+  }).join("") || '<tr><td colspan="4" class="empty">无问题</td></tr>';
+  el.innerHTML =
+    '<div class="card"><h2>人格数据自检</h2>'
+    + '<div class="body">' + kvGrid([["错误", c.error], ["警告", c.warn], ["信息", c.info]]) + '</div>'
+    + '<div class="body tight"><div class="scroll"><table>'
+    + '<thead><tr><th>级别</th><th>人格</th><th>代码</th><th>说明</th></tr></thead><tbody>'
+    + rows + '</tbody></table></div></div></div>';
+};
+
+/* ── 配置 ── */
+/* 分区标题形如「═══ ① 总开关 ═══」；把 schema 项按出现的标题归组。 */
+function buildCfgSections(schema, current){
+  const sections = [];
+  let cur = null;
+  Object.keys(schema).forEach(function(k){
+    const spec = schema[k] || {};
+    const desc = String(spec.description || k);
+    const lines = desc.split(/\r?\n/).map(function(x){ return x.trim(); });
+    const head = lines[0] || "";
+    if (/═══/.test(head)) {
+      cur = {title: head.replace(/═+/g, "").trim(), items: []};
+      sections.push(cur);
+      lines.shift();
+    } else if (!cur) {
+      cur = {title: "基本设置", items: []};
+      sections.push(cur);
+    }
+    const label = (lines.shift() || k).replace(/^[①②③④⑤⑥⑦⑧⑨⑩]+\s*/, "");
+    const hint = lines.join("\n").trim();
+    cur.items.push({key: k, spec: spec, label: label, hint: hint});
+  });
+  function walk(items, cur){
+    items.forEach(function(it){
+      const cond = it.spec.condition || {};
+      const hidden = Object.keys(cond).some(function(ck){
+        const want = cond[ck];
+        const got = cur[ck];
+        return String(got) !== String(want);
+      });
+      it.hidden = hidden;
+    });
+  }
+  return {sections: sections, applyRecalc: function(cur){
+    walk(sections.reduce(function(a, s){ return a.concat(s.items); }, []), cur);
+  }};
+}
+
+function cfgControl(it, value){
+  const spec = it.spec, k = it.key;
+  const hidAttr = ' data-cond="' + esc(k) + '"';
+  let ctl = "";
+  if (spec.type === "bool") {
+    ctl = '<input type="checkbox" id="cfg-' + esc(k) + '"'
+      + (value ? ' checked' : '') + ' style="width:auto;height:18px;width:18px">';
+  } else if (Array.isArray(spec.options)) {
+    const opts = spec.options.map(function(o, i){
+      const label = (spec.labels && spec.labels[i]) ? spec.labels[i]
+        : (Array.isArray(o) ? o[1] : o);
+      const ov = Array.isArray(o) ? o[0] : o;
+      return '<option value="' + esc(String(ov)) + '"'
+        + (String(value) === String(ov) ? ' selected' : '') + '>'
+        + esc(String(label)) + '</option>';
+    }).join("");
+    ctl = '<select id="cfg-' + esc(k) + '">' + opts + '</select>';
+  } else if (spec.type === "int" || spec.type === "float") {
+    ctl = '<input type="number" id="cfg-' + esc(k) + '" step="'
+      + (spec.type === "int" ? "1" : "any") + '"'
+      + (spec.min !== undefined ? ' min="' + spec.min + '"' : '')
+      + (spec.max !== undefined ? ' max="' + spec.max + '"' : '')
+      + ' value="' + esc(value == null ? "" : value) + '">';
+  } else if (spec.type === "list") {
+    const joined = (Array.isArray(value) ? value : []).join(", ");
+    ctl = '<input type="text" id="cfg-' + esc(k) + '" value="' + esc(joined)
+      + '" placeholder="逗号分隔，如 10001, 10086">';
+  } else if (spec.type === "text") {
+    ctl = '<textarea id="cfg-' + esc(k) + '">' + esc(value == null ? "" : value)
+      + '</textarea>';
+  } else {
+    ctl = '<input type="text" id="cfg-' + esc(k) + '" value="'
+      + esc(value == null ? "" : value) + '">';
+  }
+  const condAttr = Object.keys(spec.condition || {}).length
+    ? ' data-dep="' + esc(JSON.stringify(spec.condition)) + '"' : "";
+  return '<div class="cfg-item" id="wrap_' + esc(k) + '"' + condAttr + hidAttr + '>'
+    + '<label class="f"><span>' + esc(it.label)
+    + (spec._special ? ' <span class="pill off">' + esc(spec._special) + '</span>' : '')
+    + '</span>' + ctl
+    + (it.hint ? '<div class="hint" style="margin-top:4px">' + esc(it.hint) + '</div>' : '')
+    + '</label></div>';
+}
+
+/* 收集渲染好的所有控件值 */
+function collectCfgValues(){
+  const vals = {};
+  document.querySelectorAll("#tab-config .cfg-item").forEach(function(div){
+    const k = div.getAttribute("data-cond");
+    if (!k) return;
+    if (getComputedStyle(div).display === "none") return;   // 隐藏的依赖项不提交
+    const el = document.getElementById("cfg-" + k);
+    if (!el) return;
+    const spec = window.__CFG_SCHEMA__[k] || {};
+    if (spec.type === "bool") vals[k] = el.checked;
+    else if (spec.type === "int") vals[k] = parseInt(el.value, 10);
+    else if (spec.type === "float") vals[k] = parseFloat(el.value);
+    else if (spec.type === "list") vals[k] = el.value.split(",")
+      .map(function(x){ return x.trim(); }).filter(Boolean);
+    else vals[k] = el.value;
+  });
+  return vals;
+}
+
+/* 依赖条件（condition）联动：父开关变化时重算可见性 */
+function recalcCfgVisibility(){
+  document.querySelectorAll("#tab-config .cfg-item").forEach(function(div){
+    const dep = div.getAttribute("data-dep");
+    if (!dep) return;
+    let cond = {};
+    try { cond = JSON.parse(dep); } catch (e) { return; }
+    const ok = Object.keys(cond).every(function(ck){
+      const el = document.getElementById("cfg-" + ck);
+      if (!el) return false;
+      return String(cond[ck]) === (el.type === "checkbox" ? String(el.checked) : String(el.value));
+    });
+    div.style.display = ok ? "" : "none";
+  });
+}
+
+LOADERS.config = async function(el){
+  const wantInst = window.__CFG_INST__ || "";
+  const d = await get("/config" + (wantInst ? "?inst=" + encodeURIComponent(wantInst) : ""));
+  const instList = d.instances || [];
+  const curInst = d.inst || wantInst || "";
+  window.__CFG_INST__ = curInst;
+  const schema = d.schema || {}, current = d.current || {};
+  window.__CFG_SCHEMA__ = schema;
+  const built = buildCfgSections(schema, current);
+  if (built.sections.length) built.applyRecalc(current);
+  const cards = built.sections.map(function(s){
+    return '<div class="card"><h2>' + esc(s.title)
+      + '<span class="hint">保存后通过 /config/set 落盘并热同步，改动立即生效</span></h2>'
+      + '<div class="body">' + s.items.map(function(it){
+          return cfgControl(it, current[it.key]);
+        }).join("")
+      + '</div></div>';
+  }).join("");
+  el.innerHTML =
+    '<div class="card"><h2>插件配置'
+    + '<span class="hint">当前编辑的实例：</span>'
+    + '<select id="cfgInst" style="min-width:130px">'
+    + (instList.length ? instList : [curInst]).map(function(i){
+        return '<option value="' + esc(i) + '"' + (i === curInst ? ' selected' : '') + '>'
+          + esc(i === "__default__" ? "（默认模板·仅新建实例用）" : i) + '</option>';
+      }).join("")
+    + '</select>'
+    + '<span class="hint">改模板不影响已有实例；改某实例只影响它自己</span>'
+    + '<span class="spacer"></span>'
+    + '<button class="primary" id="btnCfgSave" title="保存全部可见配置项并立即生效">保存并生效</button>'
+    + '</h2><div class="body">'
+    + (Object.keys(schema).length
+        ? cards
+        : '<div class="empty">（未读取到配置 schema）</div>')
+    + '</div></div>';
+  const instSel = el.querySelector("#cfgInst");
+  if (instSel) instSel.addEventListener("change", function(){
+    window.__CFG_INST__ = instSel.value;
+    LOADERS.config(el).catch(function(err){ toast(err.message, true); });
+  });
+  // 依赖联动
+  el.querySelectorAll('[id^="cfg-"]').forEach(function(inp){
+    inp.addEventListener("change", function(){ recalcCfgVisibility(); });
+    if (inp.tagName === "INPUT") inp.addEventListener("input", function(){ recalcCfgVisibility(); });
+  });
+  recalcCfgVisibility();
+  el.querySelector("#btnCfgSave").addEventListener("click", function(e){
+    busy(e.target, async function(){
+      const r = await post("/config/set", {values: collectCfgValues(),
+                                           inst: window.__CFG_INST__ || ""});
+      const syn = (r.synced || []).join("、");
+      toast("已保存" + (r.applied ? " " + r.applied.length + " 项" : "") + "并生效"
+        + (syn ? "（热同步：" + syn + "）" : ""));
+      LOADERS.config(el).catch(function(err){ toast(err.message, true); });
+    });
+  });
+};
+
+/* ── 原始数据 ── */
+const RAW_EP = ["/stats", "/personas", "/sessions", "/attention",
+                "/interactions", "/proactive", "/groups", "/doctor"];
+LOADERS.raw = async function(el){
+  el.innerHTML =
+    '<div class="card"><h2>原始 JSON'
+    + '<span class="hint">排障用：直接看接口返回什么</span><span class="spacer"></span>'
+    + '<select id="rawPick" style="width:auto">'
+    + RAW_EP.map(function(e){ return '<option value="' + e + '">' + e + '</option>'; }).join("")
+    + '</select>'
+    + '<button class="primary" id="btnRaw" title="重新拉取所选接口">拉取</button></h2>'
+    + '<div class="body"><pre class="out" id="rawOut">—</pre></div></div>';
+  on("btnRaw", "click", function(e){
+    busy(e.target, async function(){
+      const d = await get(val("rawPick"));
+      document.getElementById("rawOut").innerHTML = jhtml(d, 0);
+    });
+  });
+  const d = await get("/stats");
+  document.getElementById("rawOut").innerHTML = jhtml(d, 0);
+};
+
+/* ── 启动 ── */
+buildTabs();
+switchTab("overview");
+
+on("btnRefresh", "click", function(e){ busy(e.target, refresh); });
+on("btnReload", "click", function(e){
+  busy(e.target, async function(){
+    const r = await post("/reload", {});
+    toast("已重载人格数据（" + r.personas + " 个）");
+    SESSIONS = null;
+    await refresh();
+  });
+});
+LOADERS["persona-pool"] = async function(el){
+  const d = await get("/persona-pool");
+  const personas = d.personas || [];
+  const insts = d.instances || [];
+  const defaults = d.defaults || {};
+  const byId = {};
+  personas.forEach(function(p){ byId[p.id] = p; });
+  const grantedOf = {};
+  personas.forEach(function(p){ grantedOf[p.id] = p.granted || []; });
+
+  function chip(p, inRow, inst){
+    const g = grantedOf[p.id] || [];
+    const badge = inRow ? "" : (g.length
+      ? '<span class="tag" style="font-size:10px" title="已授权给：' + esc(g.join("、")) + '">已授 ' + g.length + '</span>' : "");
+    return '<div class="pp-chip" ' + (inRow ? '' : 'draggable="true"')
+      + ' data-pid="' + esc(p.id) + '"'
+      + (inRow ? ' data-inrow="1" data-inst="' + esc(inst) + '"' : '')
+      + ' style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;margin:3px;'
+      + 'border:1px solid rgba(127,127,127,.35);border-radius:6px;background:rgba(127,127,127,.06);'
+      + 'cursor:' + (inRow ? 'default' : 'grab') + ';font-size:12px"'
+      + ' title="' + esc(p.id) + (p.world ? ' · ' + esc(p.world) : '') + '">'
+      + '<span>' + esc(p.display_name) + '</span>'
+      + (p.world ? '<span class="hint" style="font-size:10px">' + esc(p.world) + '</span>' : '')
+      + badge
+      + (inRow ? '<span class="pp-x" data-pid="' + esc(p.id) + '" data-inst="' + esc(inst)
+        + '" style="cursor:pointer;opacity:.65;padding:0 2px" title="撤销">×</span>' : '')
+      + '</div>';
+  }
+
+  const left = personas.map(function(p){ return chip(p, false, ""); }).join("")
+    || '<div class="empty">人格池为空</div>';
+
+  const rows = insts.map(function(it){
+    const g = (it.grants || []).map(function(pid){
+      return byId[pid] || {id: pid, display_name: pid + "（缺失）", world: ""};
+    });
+    const chips = g.map(function(p){ return chip(p, true, it.id); }).join("")
+      || '<span class="hint">（空 —— 把左侧人格拖到这里）</span>';
+    const cur = defaults[it.id] || "";
+    const sel = '<select data-def="' + esc(it.id) + '" style="min-width:160px">'
+      + '<option value=""' + (cur ? '' : ' selected') + '>（未设置）</option>'
+      + (it.grants || []).map(function(pid){
+          const p = byId[pid];
+          return '<option value="' + esc(pid) + '"' + (pid === cur ? ' selected' : '') + '>'
+            + esc(p ? p.display_name : pid) + '</option>';
+        }).join("")
+      + '</select>';
+    return '<div class="pp-row" data-inst="' + esc(it.id) + '" style="margin:10px 0;padding:10px;'
+      + 'border:1px solid rgba(127,127,127,.35);border-radius:8px;opacity:'
+      + (it.enabled === false ? '.55' : '1') + '">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">'
+      + '<b style="font-size:13px">' + esc(it.id) + '</b>'
+      + '<span class="hint">' + (it.enabled === false ? '已禁用' : '运行中')
+      + (it.type ? ' · ' + esc(it.type) : '') + '</span>'
+      + '<span class="hint">已授 ' + (it.grants || []).length + ' 个</span>'
+      + '<span style="flex:1"></span><span class="hint">默认人格</span>' + sel + '</div>'
+      + '<div class="pp-drop" data-inst="' + esc(it.id) + '" style="min-height:46px;padding:4px;'
+      + 'border:1px dashed rgba(127,127,127,.45);border-radius:6px">' + chips + '</div></div>';
+  }).join("") || '<div class="empty">没有检测到实例</div>';
+
+  el.innerHTML = '<div class="card"><h2>人格分配'
+    + '<span class="hint">把左侧人格<b>拖</b>到右侧实例的虚线框 = 该实例可以使用这个人格；'
+    + '一个人格可以同时授权给多个实例。一个人格都没授的实例将跳过人格注入。</span></h2>'
+    + '<div class="body"><div style="display:flex;gap:14px;align-items:flex-start">'
+    + '<div style="width:300px;flex:0 0 300px">'
+    + '<input id="ppSearch" placeholder="搜索人格名 / id / 世界观" style="width:100%;margin-bottom:6px">'
+    + '<div class="scroll" style="max-height:64vh" id="ppLeft">' + left + '</div></div>'
+    + '<div style="flex:1;min-width:0"><div class="scroll" style="max-height:64vh">' + rows + '</div></div>'
+    + '</div></div></div>';
+
+  async function rerender(){ await LOADERS["persona-pool"](el); }
+
+  const s = el.querySelector("#ppSearch");
+  if (s) s.addEventListener("input", function(){
+    const q = s.value.trim().toLowerCase();
+    el.querySelectorAll("#ppLeft .pp-chip").forEach(function(n){
+      const t = (n.textContent || "").toLowerCase() + " " + (n.getAttribute("title") || "").toLowerCase();
+      n.style.display = (!q || t.indexOf(q) >= 0) ? "" : "none";
+    });
+  });
+
+  el.querySelectorAll('.pp-chip[draggable="true"]').forEach(function(n){
+    n.addEventListener("dragstart", function(e){
+      e.dataTransfer.setData("text/plain", n.getAttribute("data-pid"));
+      e.dataTransfer.effectAllowed = "copy";
+    });
+  });
+
+  el.querySelectorAll(".pp-drop").forEach(function(z){
+    z.addEventListener("dragover", function(e){
+      e.preventDefault(); z.style.borderColor = "var(--ac,#5af)";
+    });
+    z.addEventListener("dragleave", function(){ z.style.borderColor = ""; });
+    z.addEventListener("drop", async function(e){
+      e.preventDefault(); z.style.borderColor = "";
+      const pid = e.dataTransfer.getData("text/plain");
+      if (!pid) return;
+      try {
+        await post("/persona-pool/grant", {inst: z.getAttribute("data-inst"), pid: pid});
+        toast("已授权"); await rerender();
+      } catch(err){ toast("授权失败：" + (err.message || err)); }
+    });
+  });
+
+  el.querySelectorAll(".pp-x").forEach(function(n){
+    n.addEventListener("click", async function(){
+      try {
+        await post("/persona-pool/revoke",
+          {inst: n.getAttribute("data-inst"), pid: n.getAttribute("data-pid")});
+        toast("已撤销"); await rerender();
+      } catch(err){ toast("撤销失败：" + (err.message || err)); }
+    });
+  });
+
+  el.querySelectorAll("select[data-def]").forEach(function(sel){
+    sel.addEventListener("change", async function(){
+      try {
+        await post("/persona-pool/default",
+          {inst: sel.getAttribute("data-def"), pid: sel.value});
+        toast("默认人格已更新");
+      } catch(err){ toast("设置失败：" + (err.message || err)); await rerender(); }
+    });
+  });
+};
+
+</script>
+</body>
+</html>
