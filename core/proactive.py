@@ -560,7 +560,7 @@ SIMULATED_USER_TEXT = (
 def _find_adapter(context: Any, platform_name: str) -> Any:
     """按平台名找到适配器实例。
 
-    UMO 的第一段是 `PlatformMetadata.**id**`（例如 "Banyan" / "Sui"），
+    UMO 的第一段是 `PlatformMetadata.**id**`（例如 "BotA" / "BotB"），
     而 `name` 是平台**类型**（多个适配器都叫 "aiocqhttp"），
     所以必须按 id 匹配。
     """
@@ -581,8 +581,8 @@ def _find_adapter(context: Any, platform_name: str) -> Any:
 
     if platform_name:
         # **先按 id 匹配**：UMO 的第一段是 `platform_meta.id`（本机
-        # id=Banyan/Sui，而两个适配器的 name 都是 aiocqhttp）。
-        # 若先按 name 匹配，Sui 的会话会选中 Banyan 适配器 → 以错误的
+        # id=BotA/BotB，而两个适配器的 name 都是 aiocqhttp）。
+        # 若先按 name 匹配，BotB 的会话会选中 BotA 适配器 → 以错误的
         # umo 甚至错误的账号发出主动消息。
         for inst in insts:
             m = meta_of(inst)

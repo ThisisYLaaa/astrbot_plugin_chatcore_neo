@@ -302,8 +302,8 @@ def _safe_to_real(plugin: Any) -> dict:
 
     真实 umo 只有几个地方记着（会话人格表 / 注入覆盖表 的键）。旧实现还
     把 `st.sessions()` 的**目录名**也塞进映射（`out.setdefault(real, real)`），
-    等于把 safe 名当成了它自己 —— 于是还原不出来的会话就以 `Banyan_..._
-    149370905` 这种下划线名直接出现在页面上，看起来就是「没规格化的残留」。
+    等于把 safe 名当成了它自己 —— 于是还原不出来的会话就以 `BotA_..._
+    10007` 这种下划线名直接出现在页面上，看起来就是「没规格化的残留」。
     现在只接受含 `:` 的真实 umo 作为还原源。
     """
     try:
@@ -343,7 +343,7 @@ _DIR_UMO_RE = re.compile(
     r"^([^_]+)_(" + "|".join(re.escape(t) for t in SPEC_MSG_TYPES) + r")_(.+)$")
 # 私聊形态的历史印象文件名：`实例_FriendMessage_对方QQ`。
 # 旧代码 `uid or umo` 在私聊里（uid 恒为空）把印象写成了**以 umo 命名**的文件，
-# 例如 `Banyan_FriendMessage_10001.json`。它不是"垃圾用户"，而是
+# 例如 `BotA_FriendMessage_10001.json`。它不是"垃圾用户"，而是
 # **那个真人自己**的计数 —— 所以按"私聊会话 = 对方"归到他名下，
 # 既不显示成待清理的残留，也不删任何东西。
 _DIR_PRIV_RE = re.compile(r"^([^_]+)_(FriendMessage|StrangerMessage)_(.+)$")
@@ -375,7 +375,7 @@ def _resolve_umo(plugin: Any, dirname: str) -> tuple[str, bool]:
 def _is_spec_uid(uid: str) -> bool:
     """用户 id 规格化：纯数字（QQ/昵称位 id）或以冒号分隔的平台 id。
 
-    垃圾实例是 `Banyan_FriendMessage_10001` 这种把 umo safe 化后
+    垃圾实例是 `BotA_FriendMessage_10001` 这种把 umo safe 化后
     当 uid 的历史文件 —— 含下划线，会被排除。
     """
     u = str(uid)
@@ -568,7 +568,7 @@ def build_sessions(plugin: Any, alive: set[str] | None = None) -> dict:
     for uid, nm in names.items():
         users.setdefault(uid, nm)
     # 用户同样只留规格化 id（纯数字 QQ / 冒号平台 id）；像
-    # `Banyan_FriendMessage_10001.json` 这种把 umo 当 uid 的历史文件
+    # `BotA_FriendMessage_10001.json` 这种把 umo 当 uid 的历史文件
     # （含下划线）归入残留，不再出现在用户下拉。
     clean_users: list[dict] = []
     stale_users: list[dict] = []
@@ -1642,7 +1642,7 @@ def set_session_privileges(plugin: Any, scope: str, qids: Any) -> dict:
     """把某实例的特权用户设为**第一名**（只允许一名）。"""
     inst = str(scope or "").strip().strip(":")
     if not inst:
-        raise RuntimeError("scope 不能为空（传实例 id，如 Banyan）")
+        raise RuntimeError("scope 不能为空（传实例 id，如 BotA）")
     if isinstance(qids, (list, tuple)):
         uid = next((str(q).strip() for q in qids if str(q).strip()), "")
     else:

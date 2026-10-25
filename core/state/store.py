@@ -205,7 +205,7 @@ class Privilege:
 
     @staticmethod
     def inst_of(scope: str) -> str:
-        """`Banyan:GroupMessage:123` -> `Banyan`。"""
+        """`BotA:GroupMessage:123` -> `BotA`。"""
         return str(scope or "").split(":", 1)[0]
 
     def uid_for(self, scope: str = "") -> str:

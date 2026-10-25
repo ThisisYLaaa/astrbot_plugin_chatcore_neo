@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""实例化：每个平台适配器（Banyan / Sui / …）一份独立配置与数据根。
+"""实例化：每个平台适配器（BotA / BotB / …）一份独立配置与数据根。
 
 设计
 ----
@@ -13,7 +13,7 @@ AstrBot 的插件配置是**全局单文件**（`star_manager` 启动时读一�
         memory/          # memory.db + graph.db
         proactive/       # 主动消息调度状态
 
-实例 id = UMO 的第一段（`Banyan:GroupMessage:123` -> `Banyan`）。
+实例 id = UMO 的第一段（`BotA:GroupMessage:123` -> `BotA`）。
 
 本模块不 import 任何 chatcore 内部逻辑，只依赖 paths 与框架的 AstrBotConfig，
 方便单测。
@@ -105,7 +105,7 @@ class InstanceStore:
     def default_id(self) -> str:
         if self._default:
             return self._default
-        # 已有配置的实例优先（迁移后 Banyan 一定在）
+        # 已有配置的实例优先（迁移后 BotA 一定在）
         loaded = self.loaded_ids()
         if loaded:
             self._default = loaded[0]

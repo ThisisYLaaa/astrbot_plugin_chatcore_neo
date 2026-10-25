@@ -8,7 +8,8 @@
 --------
 1. 每个启用的平台实例建 `instances/<id>/config.json`（当前全局配置的快照；
    第一个实例保留全量，其余套 MINIMAL_PRESET）。
-2. `instances/<id>/personas.json`：`diy_sui` 只授权给 Sui，其余给 Banyan。
+2. `instances/<id>/personas.json`：默认全部人格授权给所有实例；
+   要按实例收窄就改脚本里的 `CUSTOMIZE`。
 3. `memory.db` 拆库：复制一份，按 `umo` 前缀删掉别人的行。
 4. `graph.db` 拆库：复制一份，按本库现存 `source_memory_id` 剪枝。
 
@@ -103,12 +104,22 @@ def main() -> int:
         over["privilege_uid"] = uid
         plan[iid] = over
 
+    # 每个实例可用的人格。默认：全部人格授权给所有实例。
+    # 想按实例收窄就在下面写死，例如：
+    #   CUSTOMIZE = {"BotB": ["diy_example"], "BotA": ["*"]}
+    #   —— "*" 表示除被其它实例独占的之外，其余全给。
+    CUSTOMIZE: dict[str, list[str]] = {}
+    taken = {p for v in CUSTOMIZE.values() for p in v if p != "*"}
     grants: dict[str, list[str]] = {}
     for iid in enabled:
-        if iid.lower() == "sui":
-            grants[iid] = [p for p in personas if p == "diy_sui"]
+        spec = CUSTOMIZE.get(iid)
+        if spec is None:
+            grants[iid] = [p for p in personas if p not in taken]
+        elif "*" in spec:
+            grants[iid] = [p for p in personas if p not in taken] + \
+                          [p for p in spec if p != "*"]
         else:
-            grants[iid] = [p for p in personas if p != "diy_sui"]
+            grants[iid] = [p for p in personas if p in spec]
 
     print("\n计划：")
     for iid in enabled:

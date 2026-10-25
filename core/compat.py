@@ -182,7 +182,7 @@ class EventTemplateStore:
                 mt_name = ""
 
         # **必须用 get_platform_id()**：UMO 的第一段是 platform_meta.**id**
-        # （本机 name='aiocqhttp' 而 id='Banyan'，UMO 里出现的是 Banyan）。
+        # （本机 name='aiocqhttp' 而 id='BotA'，UMO 里出现的是 BotA）。
         # 旧实现读 getattr(event,"platform") 拿到的是整个 PlatformMetadata
         # 的 repr，导致重建出来的 UMO 完全对不上。
         tpl = EventTemplate(

@@ -67,7 +67,7 @@ _CUR_INST: ContextVar[str] = ContextVar("ccn_inst", default="")
 
 
 def inst_of_umo(umo: str) -> str:
-    """`Banyan:GroupMessage:123` -> `Banyan`。"""
+    """`BotA:GroupMessage:123` -> `BotA`。"""
     return str(umo or "").split(":", 1)[0]
 
 
@@ -386,7 +386,7 @@ class ChatCoreNeoPlugin(Star):
         """按实例配置装配一套子对象。
 
         这些对象在旧版是 `__init__` 里用**全局配置**固化出来的；实例化之后
-        每个实例必须有自己的那份，否则 Sui 会跑 Banyan 的注意力参数。
+        每个实例必须有自己的那份，否则 BotB 会跑 BotA 的注意力参数。
         """
         from types import SimpleNamespace
         cfg = self.cfg_of(inst)
@@ -944,8 +944,8 @@ class ChatCoreNeoPlugin(Star):
         try:
             uid = str(event.get_sender_id() or "").strip()
             name = str(event.get_sender_name() or "").strip()
-            # 平台偶尔把 QQ 号当昵称返回（`806425073` → `"806425073"`）。
-            # 那不是昵称，存下来只会让页面上出现「806425073（806425073）」。
+            # 平台偶尔把 QQ 号当昵称返回（`10003` → `"10003"`）。
+            # 那不是昵称，存下来只会让页面上出现「10003（10003）」。
             if name == uid:
                 name = ""
             if uid and name and self._user_names.get(uid) != name:
@@ -987,7 +987,7 @@ class ChatCoreNeoPlugin(Star):
 
         群聊的 `uid` 就是发送者；私聊的 `uid` 是空串（状态按会话级存），
         旧写法 `uid or umo` 于是把私聊印象写成了
-        `_impressions/Banyan_FriendMessage_10001.json` —— 既在管理页被
+        `_impressions/BotA_FriendMessage_10001.json` —— 既在管理页被
         当成"把 umo 当 uid"的垃圾文件，又让老插件留下的
         `_impressions/10001.json`（真印象）永远读不到。
         私聊里发送者就是对方，用 sender_id 作键才是对的
@@ -1258,7 +1258,7 @@ class ChatCoreNeoPlugin(Star):
                 # `is_at_or_wake_command` 置真，所以不排除就会在群里被下面第 ③ 条拦掉。
                 #
                 # 线上实录（戳一戳 llm 模式，群里）：
-                #   戳一戳已重入管道 umo='...:GroupMessage:132292540' 成功=True
+                #   戳一戳已重入管道 umo='...:GroupMessage:10005' 成功=True
                 #   闸门拦截：唤醒前缀唤醒，未 @/引用机器人　文本='（对方戳了你一下）'
                 # 私聊因为第 ① 条早就放行了，所以**只在群里复现**。
                 return
@@ -1381,7 +1381,7 @@ class ChatCoreNeoPlugin(Star):
 
             # 解析本轮说话人：群聊用发送者 uid，私聊用会话对象
             uid = self._sender_id(event) if not is_private else ""
-            # 特权按**会话**解析：分会话覆盖（`Sui`→朋友的号）优先于全局
+            # 特权按**会话**解析：分会话覆盖（`BotB`→朋友的号）优先于全局
             tier = self.privilege.tier(uid, scope=umo) if uid else "intimate"
             tier_label = doc.world_role or ""
 
@@ -3146,7 +3146,7 @@ class ChatCoreNeoPlugin(Star):
            里调用，也就是"机器人真的在这里回过话"。于是：
            * 正常聊过的会话 → 有状态目录 → 第一层通过；
            * 测试脚本打进来的假会话（`webchat:FriendMessage:webchat!astrbot!
-             newapi-balance-e2e-*`、`Sui:GroupMessage:1`）只在 `on_any_message`
+             newapi-balance-e2e-*`、`BotB:GroupMessage:1`）只在 `on_any_message`
              里被记了账本，没有状态目录 → 未知，不再开口、不再显示、可一键清。
 
         2. **AstrBot 侧还认这个会话**（DB `conversations` 里还有该 UMO 的

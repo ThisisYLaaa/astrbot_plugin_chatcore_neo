@@ -215,7 +215,7 @@ def verify(root: Path, report: dict) -> tuple[list[str], list[str]]:
             bad.append(f"atoms {row['file']}: 迁移 {row['migrated']} 条，库里 {got} 条")
 
     # ② 向量保真：float32 打包有精度损失，余弦应当 ≈1.0
-    for src in sorted(root.glob("Banyan_FriendMessage_*.json")):
+    for src in sorted(root.glob("*_FriendMessage_*.json")):
         raw = read_json(src).get("atoms") or []
         for d in [x for x in raw if len(x.get("vec") or []) >= 16][:3]:
             hit = [a for a in store.load(umo_of(d, src)) if a.id == d["id"]]

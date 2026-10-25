@@ -40,7 +40,7 @@
 
 ### 多实例（v2）
 
-- **实例 = 平台适配器**（`Banyan` / `Sui` / …），一个 AstrBot 进程里挂几个号就隔离几套
+- **实例 = 平台适配器**（`BotA` / `BotB` / …），一个 AstrBot 进程里挂几个号就隔离几套
 - 每个实例独立：`config.json`、`personas.json`、`memory/{memory.db,graph.db}`、`characters.json`、主动消息状态
 - **特权用户每实例一名**：写在各自的 `privilege_uid`，互不影响
 - **人格池授权矩阵**：55 个人格放在一个池子里，拖到哪个实例就哪个实例能用；同一个人格可以授权给多个实例
@@ -85,7 +85,7 @@ data/plugin_data/chatcore_neo/
 
 | 概念 | 说明 |
 |---|---|
-| 实例 id | UMO 第一段，`Banyan:GroupMessage:123` → `Banyan` |
+| 实例 id | UMO 第一段，`BotA:GroupMessage:123` → `BotA` |
 | 配置来源 | `instances/<id>/config.json`；框架面板那份只是模板 |
 | 新建实例 | 检测到「已启用但没配置目录」的平台时自动创建（`instance_auto_create`） |
 | 新实例预设 | 默认套「最小可用」：关注意力/分段/主动消息/TTS 等，`instance_new_preset=false` 可关 |

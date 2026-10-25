@@ -3,11 +3,11 @@
 
 场景
 ----
-同一个人在 Banyan 和 Sui 两个适配器下、或同一适配器的多个群之间，
+同一个人在 BotA 和 BotB 两个适配器下、或同一适配器的多个群之间，
 bot 应该"记得是同一个人/同一件事"。`groups.json` 把若干 UMO 归到一组：
 
-    {"groups": {"ADOFAI_Banyan": ["Banyan:GroupMessage:132292540",
-                                  "Banyan:GroupMessage:239996243"]}}
+    {"groups": {"示例组": ["BotA:GroupMessage:10005",
+                          "BotA:GroupMessage:10008"]}}
 
 实现方式很轻：**记忆按组键存取**，而不是按单个 UMO。
 组键 = 该 UMO 所属的组名；没有归属时组键就是 UMO 自己。
@@ -86,7 +86,7 @@ class MemoryGroups:
     # ------------------------------------------------------------ 写
     @staticmethod
     def inst_of(umo: str) -> str:
-        """`Banyan:GroupMessage:1` -> `Banyan`。"""
+        """`BotA:GroupMessage:1` -> `BotA`。"""
         return str(umo or "").split(":", 1)[0]
 
     def _assert_same_instance(self, umo: str, group: str) -> None:
