@@ -137,6 +137,39 @@
         "hint": "切换人格时把 bot 的群名片改成该模板，{name} 替换为角色名。留空 = 不改群名片。\n仅 aiocqhttp 适配器支持，其它平台会静默跳过。",
         "default": "AA~{name}"
     },
+    "group_recent_enabled": {
+        "description": "人格组：注入同组其他会话的近况",
+        "type": "bool",
+        "hint": "开启后，某人在会话 b 说话时，若他 1 小时内在**同组的其他会话**里触发过 bot 回复，就把最近几条的原话（他的消息 + bot 当时的回复）注入本轮提示词。只对已归入人格组的会话生效；未归组的会话各自独立。",
+        "default": true
+    },
+    "group_recent_window_min": {
+        "description": "近况时间窗（分钟）",
+        "type": "int",
+        "hint": "只取这个时间窗内的消息；超出的一条都不加。",
+        "default": 60,
+        "condition": {
+            "group_recent_enabled": true
+        }
+    },
+    "group_recent_limit": {
+        "description": "最多注入几条",
+        "type": "int",
+        "hint": "按时间取最近 N 条（正序注入，方便模型读时间线）。",
+        "default": 5,
+        "condition": {
+            "group_recent_enabled": true
+        }
+    },
+    "group_recent_max_chars": {
+        "description": "近况段字数上限",
+        "type": "int",
+        "hint": "整段最多这么多字，超出截断；单条用户消息截 160 字、bot 回复截 240 字。",
+        "default": 800,
+        "condition": {
+            "group_recent_enabled": true
+        }
+    },
     "identity_confirm_inject": {
         "description": "群聊注入「本轮对话对象」身份强调",
         "type": "bool",

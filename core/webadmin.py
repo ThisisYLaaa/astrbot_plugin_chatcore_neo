@@ -303,7 +303,7 @@ def _safe_to_real(plugin: Any) -> dict:
     真实 umo 只有几个地方记着（会话人格表 / 注入覆盖表 的键）。旧实现还
     把 `st.sessions()` 的**目录名**也塞进映射（`out.setdefault(real, real)`），
     等于把 safe 名当成了它自己 —— 于是还原不出来的会话就以 `BotA_..._
-    10007` 这种下划线名直接出现在页面上，看起来就是「没规格化的残留」。
+    10006` 这种下划线名直接出现在页面上，看起来就是「没规格化的残留」。
     现在只接受含 `:` 的真实 umo 作为还原源。
     """
     try:
@@ -881,54 +881,69 @@ def set_impression(plugin: Any, uid: str, *, sfw: str | None = None,
 
 # ---------------------------------------------------------------- 总览
 
-def build_stats(plugin: Any) -> dict:
-    """运行统计。
+def build_stats(plugin: Any, inst: str = "") -> dict:
+    """运行统计 —— **按实例**。
 
-    注意：这里**不要**跑 doctor —— doctor 会全量扫描所有人格文件，
-    15 个人格时轻松超过一秒，而总览页根本不用它的结果
-    （自检有独立的 `/doctor` 接口）。曾经把它塞在这里，
-    导致「总览 / 原始数据」两个页签打开都要白等一次全盘扫描。
+    实例化之后每个子对象（注意力/判定/分段/TTS/调度器/记忆库）都是各实例
+    一套，所以这里必须先切上下文再取值，否则读到的永远是默认实例。
     """
     from . import world as world_mod
-    mem = {}
+    i = inst or getattr(plugin, "_default_inst", "")
+    tok = plugin.use_inst(i)
     try:
-        mem = plugin.memory.stats()
-    except Exception:
-        pass
-    seg = {}
-    try:
-        seg = plugin.segmenter.report()
-    except Exception:
-        pass
-    stream = {}
-    try:
-        stream = dict(plugin._stream_stats)
-    except Exception:
-        pass
-    grp = {}
-    try:
-        grp = plugin.groups.stats()
-    except Exception:
-        pass
-    return {
-        "plugin": dict(plugin._stats),
-        "last_error": getattr(plugin, "_last_error", ""),
-        "personas": len(plugin.personas),
-        "worlds": world_mod.stats().__dict__,
-        "attention": plugin.attention.stats(),
-        "judge": plugin.judge.report(),
-        "impressions": plugin.impressions.report(),
-        "memory": mem,
-        "proactive": plugin.scheduler.report(),
-        "poke": plugin.poke.report(),
-        "merge": plugin.merge.report(),
-        "tts": plugin.tts.report(),
-        "templates": plugin.templates.stats(),
-        "segment": seg,
-        "stream": stream,
-        "groups": grp,
-        "features": build_features(plugin),
-    }
+        mem = {}
+        try:
+            mem = plugin.memory.stats()
+        except Exception:
+            pass
+        seg = {}
+        try:
+            seg = plugin.segmenter.report()
+        except Exception:
+            pass
+        stream = {}
+        try:
+            stream = dict(plugin._stream_stats)
+        except Exception:
+            pass
+        grp = {}
+        try:
+            allg = plugin.groups.all_groups()
+            mine = [m for m in allg.values()
+                    if (m.get("instance") or "") in ("", i)]
+            grp = {"groups": len(mine),
+                   "members": sum(len(m.get("members") or []) for m in mine),
+                   "path": str(getattr(plugin.groups, "path", "")),
+                   "total_groups": len(allg)}
+        except Exception:
+            pass
+        out = {
+            "plugin": dict(plugin._stats),
+            "last_error": getattr(plugin, "_last_error", ""),
+            "personas": len(plugin.personas),
+            "worlds": world_mod.stats().__dict__,
+            "attention": plugin.attention.stats(),
+            "judge": plugin.judge.report(),
+            "impressions": plugin.impressions.report(),
+            "memory": mem,
+            "proactive": plugin.scheduler.report(),
+            "poke": plugin.poke.report(),
+            "merge": plugin.merge.report(),
+            "tts": plugin.tts.report(),
+            "templates": plugin.templates.stats(),
+            "segment": seg,
+            "stream": stream,
+            "groups": grp,
+            "features": build_features(plugin),
+            "inst": i,
+        }
+        try:
+            out["instances"] = [m["id"] for m in plugin._inst_store.discover()]
+        except Exception:
+            out["instances"] = [i] if i else []
+        return out
+    finally:
+        plugin.end_inst(tok)
 
 
 # ---------------------------------------------------------------- 功能开关
@@ -1290,23 +1305,59 @@ async def edit_memory_atom(plugin: Any, umo: str, atom_id: str,
 
 # ---------------------------------------------------------------- 图谱
 
-def build_graph(plugin: Any, limit: int = 160) -> dict:
-    """给可视化用的子图：按度数取前 N 个节点，只保留它们之间的边。"""
+def build_graph(plugin: Any, limit: int = 160, persona: str = "",
+                session: str = "") -> dict:
+    """给可视化用的子图：按度数取前 N 个节点，只保留它们之间的边。
+
+    `persona` / `session` 非空时只统计该人格 / 该会话贡献的条目
+    （图谱条目带 `persona_id` 与 `session_id`，见 core/graph/model.py）。
+    """
     g = plugin.memory.graph
     try:
         stats = g.stats()
     except Exception as e:
         return {"error": repr(e), "nodes": [], "edges": []}
 
+    entries = list(g.entries.values())
+    pcount: dict[str, int] = {}
+    scount: dict[str, int] = {}
+    for e in entries:
+        pid = getattr(e, "persona_id", "") or ""
+        sid = getattr(e, "session_id", "") or ""
+        pcount[pid] = pcount.get(pid, 0) + 1
+        scount[sid] = scount.get(sid, 0) + 1
+
+    allowed_keys: set[str] | None = None
+    if persona or session:
+        allowed_keys = set()
+        for e in entries:
+            if persona and (getattr(e, "persona_id", "") or "") != persona:
+                continue
+            if session and (getattr(e, "session_id", "") or "") != session:
+                continue
+            allowed_keys.update(getattr(e, "node_keys", []) or [])
+        if not allowed_keys:
+            return {"nodes": [], "edges": [], "stats": stats,
+                    "truncated": False, "total_nodes": 0,
+                    "personas": _graph_personas(plugin, pcount),
+                    "sessions": _graph_sessions(plugin, scount),
+                    "filtered": True}
+
     deg: dict[str, int] = {}
     for e in g.edges.values():
         if e.status != "active":
+            continue
+        if allowed_keys is not None and (
+                e.source_key not in allowed_keys
+                or e.target_key not in allowed_keys):
             continue
         deg[e.source_key] = deg.get(e.source_key, 0) + 1
         deg[e.target_key] = deg.get(e.target_key, 0) + 1
 
     # 没有被边连上的节点（例如只有 fact，没抽到关系）也要能看到
     for k in g.nodes:
+        if allowed_keys is not None and k not in allowed_keys:
+            continue
         deg.setdefault(k, 0)
 
     top = sorted(deg.items(), key=lambda kv: -kv[1])[:max(1, limit)]
@@ -1334,7 +1385,31 @@ def build_graph(plugin: Any, limit: int = 160) -> dict:
                           "weight": e.weight})
     truncated = len(deg) > len(keep)
     return {"nodes": nodes, "edges": edges, "stats": stats,
-            "truncated": truncated, "total_nodes": len(deg)}
+            "truncated": truncated, "total_nodes": len(deg),
+            "personas": _graph_personas(plugin, pcount),
+            "sessions": _graph_sessions(plugin, scount),
+            "persona": persona, "session": session}
+
+
+def _graph_personas(plugin: Any, counts: dict[str, int]) -> list[dict]:
+    """图谱里出现的人格（带条目数）。空 persona_id 记为「未标注」。"""
+    out = []
+    for pid, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        if not pid:
+            out.append({"id": "", "name": "（未标注）", "count": n})
+            continue
+        d = plugin.personas.get(pid)
+        out.append({"id": pid,
+                    "name": d.display_name if d else f"{pid}（已删除）",
+                    "count": n})
+    return out
+
+
+def _graph_sessions(plugin: Any, counts: dict[str, int]) -> list[dict]:
+    out = []
+    for sid, n in sorted(counts.items(), key=lambda kv: -kv[1])[:200]:
+        out.append({"umo": sid, "count": n})
+    return out
 
 
 def build_graph_node(plugin: Any, key: str) -> dict:
@@ -1671,6 +1746,7 @@ def clear_session_privileges(plugin: Any, scope: str) -> dict:
 # ---------------------------------------------------------------- 记忆组
 
 def build_groups(plugin: Any) -> dict:
+    """人格组：组定义（含人格/副人格）+ 未归组会话 + 可选人格。"""
     g = plugin.groups
     groups = g.all_groups()
     # ungrouped 必须拿**真实 umo** 去比：groups 里存的是真实 umo，
@@ -1678,38 +1754,104 @@ def build_groups(plugin: Any) -> dict:
     # 被列成"未归组"（实测 18 个全中，真实只有 11 个未归组）。
     s2r = _safe_to_real(plugin)
     real_all = [s2r.get(d, d) for d in plugin.state.sessions()]
-    grouped = {u for v in groups.values() for u in v}
+    grouped = {u for m in groups.values() for u in (m.get("members") or [])}
+    try:
+        personas = [{"id": d.id, "name": d.display_name}
+                    for d in plugin.personas.all()]
+    except Exception:
+        personas = []
+    insts: list[dict] = []
+    try:
+        for m in plugin._inst_store.discover():
+            iid = m["id"]
+            insts.append({"id": iid,
+                          "enabled": bool(m.get("enabled", True)),
+                          "grants": plugin._persona_pool.grants(iid)})
+    except Exception:
+        pass
     return {"groups": groups, "stats": g.stats(),
-            "ungrouped": [u for u in real_all if u not in grouped]}
+            "ungrouped": [u for u in real_all if u not in grouped],
+            "personas": personas, "instances": insts}
 
 
-def assign_group(plugin: Any, umo: str, group: str) -> dict:
-    plugin.groups.assign(umo, group)
-    return build_groups(plugin)
+def assign_group(plugin: Any, umos: Any, group: str) -> dict:
+    items = list(umos) if isinstance(umos, (list, tuple)) else [umos]
+    added = plugin.groups.assign_many(items, group)
+    for u in added:
+        try:
+            plugin.apply_group_to_session(u)
+        except Exception:
+            pass
+    return {"added": added, **build_groups(plugin)}
 
 
-def remove_group(plugin: Any, umo: str) -> dict:
-    plugin.groups.remove(umo)
-    return build_groups(plugin)
+def remove_group(plugin: Any, umos: Any) -> dict:
+    items = list(umos) if isinstance(umos, (list, tuple)) else [umos]
+    removed = plugin.groups.remove_many(items)
+    return {"removed": removed, **build_groups(plugin)}
 
 
-def merge_groups(plugin: Any, a: str, b: str) -> dict:
-    name = plugin.groups.merge(a, b)
+def create_group(plugin: Any, name: str, persona: str = "",
+                 instance: str = "", costars: Any = None) -> dict:
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("组名不能为空")
+    pid = str(persona or "").strip()
+    if pid and pid not in plugin.personas:
+        raise ValueError(f"未知人格：{pid}")
+    plugin.groups.create(name, persona=pid, costars=costars,
+                         instance=str(instance or "").strip())
     return {"group": name, **build_groups(plugin)}
 
 
+def delete_group(plugin: Any, name: str) -> dict:
+    plugin.groups.delete(str(name or "").strip())
+    return build_groups(plugin)
+
+
+def set_group_persona(plugin: Any, group: str, pid: str) -> dict:
+    """给组指定人格，并把组内成员立刻对齐。"""
+    group = str(group or "").strip()
+    pid = str(pid or "").strip()
+    if pid:
+        if pid not in plugin.personas:
+            raise ValueError(f"未知人格：{pid}")
+        meta = plugin.groups.meta(group)
+        inst = str(meta.get("instance") or "")
+        pool = getattr(plugin, "_persona_pool", None)
+        if pool is not None and inst and not pool.is_available(inst, pid):
+            raise ValueError(f"人格 {pid} 未授权给实例 {inst}，请先在「人格分配」里授权")
+    plugin.groups.set_persona(group, pid)
+    for u in plugin.groups.members(group):
+        try:
+            plugin.apply_group_to_session(u)
+        except Exception:
+            pass
+    return {"group": group, **build_groups(plugin)}
+
+
+def set_group_costars(plugin: Any, group: str, pids: Any) -> dict:
+    group = str(group or "").strip()
+    clean = [str(x).strip() for x in (pids or []) if str(x).strip()]
+    for p in clean:
+        if p not in plugin.personas:
+            raise ValueError(f"未知人格：{p}")
+    plugin.groups.set_costars(group, clean)
+    for u in plugin.groups.members(group):
+        try:
+            plugin.apply_group_to_session(u)
+        except Exception:
+            pass
+    return {"group": group, **build_groups(plugin)}
+
+
 def rename_group(plugin: Any, old: str, new: str) -> dict:
-    """重命名记忆组（保留全部成员；目标组已存在时等价于并入）。"""
+    """重命名人格组（保留全部成员；目标组已存在时等价于并入）。"""
     old, new = str(old).strip(), str(new).strip()
     if not old or not new:
         raise ValueError("组名不能为空")
-    if old == new:
-        return {"group": new, **build_groups(plugin)}
-    members = plugin.groups.members(old)
-    if not members:
-        raise ValueError(f"找不到组 {old}")
-    for u in members:
-        plugin.groups.assign(u, new)   # assign 会顺带把成员从旧组摘走
+    if old != new:
+        new = plugin.groups.rename(old, new)
     return {"group": new, **build_groups(plugin)}
 
 
@@ -1925,9 +2067,9 @@ def prune_stale(plugin: Any, *, sessions: list[str] | None = None,
     for umo in sessions or []:
         umo = str(umo)
         key = _mem_key(plugin, umo) if mem else umo
-        if grp is not None and key != umo:
-            skipped.append(umo)          # 归组的会话动整组记忆，太危险，跳过
-            continue
+        # 归组的会话也能清：只清"它自己"的状态，**不动组共享记忆**
+        #（组里还有别的成员，shared 记忆删了会连累他们）
+        grouped = grp is not None and key != umo
         # 状态目录
         d = st.root / safe_segment(umo)
         if d.is_dir():
@@ -1940,8 +2082,8 @@ def prune_stale(plugin: Any, *, sessions: list[str] | None = None,
         for k in list(st.inject_overrides):
             if k.startswith(sfx):
                 st.inject_overrides.pop(k)
-        # 记忆（仅未归组；此时 key == umo）
-        if mem is not None:
+        # 记忆（归组的跳过：那是整组共享的）
+        if mem is not None and not grouped:
             try:
                 mem.forget(key)
             except Exception:
@@ -2217,8 +2359,8 @@ def register(plugin: Any) -> list[str]:
             friends=bool(d.get("friends", True)),
             force=bool(d.get("force", False))))
 
-    async def stats():
-        return await _wrap(lambda: build_stats(plugin))
+    async def stats(inst: str = ""):
+        return await _wrap(lambda: build_stats(plugin, inst or _q("inst")))
 
     async def doctor():
         return await _wrap(lambda: build_doctor(plugin))
@@ -2241,15 +2383,33 @@ def register(plugin: Any) -> list[str]:
         return await _wrap(lambda: build_preview(
             plugin, p, is_private=priv, msg_mode=mode, nsfw=ns))
 
-    async def attention():
-        return await _wrap(lambda: build_attention(plugin))
+    async def attention(inst: str = ""):
+        i = inst or _q("inst") or plugin._default_inst
+        tok = plugin.use_inst(i)
+        try:
+            return await _wrap(lambda: build_attention(plugin))
+        finally:
+            plugin.end_inst(tok)
 
-    async def memory(umo: str = ""):
-        return await _wrap(lambda: build_memory(plugin, umo or _q("umo")))
+    async def memory(umo: str = "", inst: str = ""):
+        i = inst or _q("inst") or plugin._default_inst
+        tok = plugin.use_inst(i)
+        try:
+            return await _wrap(lambda: build_memory(plugin, umo or _q("umo")))
+        finally:
+            plugin.end_inst(tok)
 
-    async def graph(limit: int = 0):
-        return await _wrap(lambda: build_graph(
-            plugin, limit or _qi("limit", 160)))
+    async def graph(limit: int = 0, persona: str = "", session: str = "",
+                    inst: str = ""):
+        i = inst or _q("inst") or plugin._default_inst
+        tok = plugin.use_inst(i)
+        try:
+            return await _wrap(lambda: build_graph(
+                plugin, limit or _qi("limit", 160),
+                persona if persona else _q("persona"),
+                session if session else _q("session")))
+        finally:
+            plugin.end_inst(tok)
 
     async def graph_node(key: str = ""):
         return await _wrap(lambda: build_graph_node(plugin, key or _q("key")))
@@ -2258,10 +2418,15 @@ def register(plugin: Any) -> list[str]:
         return await _wrap(lambda: graph_search(
             plugin, q or _q("q"), k or _qi("k", 10), session or _q("session")))
 
-    async def interactions():
-        return await _wrap(lambda: build_interactions(plugin))
+    async def interactions(inst: str = ""):
+        i = inst or _q("inst") or plugin._default_inst
+        tok = plugin.use_inst(i)
+        try:
+            return await _wrap(lambda: build_interactions(plugin))
+        finally:
+            plugin.end_inst(tok)
 
-    async def proactive():
+    async def proactive(inst: str = ""):
         # 先强刷一次 AstrBot 侧存活集：孤儿会话从「活跃度」消失、进残留，
         # 与 `_session_known`（出话闸门）共用同一判据，页面看得见=真会开口。
         ref = getattr(plugin, "_refresh_alive", None)
@@ -2270,7 +2435,12 @@ def register(plugin: Any) -> list[str]:
                 await ref(force=True)
             except Exception:
                 pass
-        return await _wrap(lambda: build_proactive(plugin))
+        i = inst or _q("inst") or plugin._default_inst
+        tok = plugin.use_inst(i)
+        try:
+            return await _wrap(lambda: build_proactive(plugin))
+        finally:
+            plugin.end_inst(tok)
 
     async def groups():
         return await _wrap(lambda: build_groups(plugin))
@@ -2347,18 +2517,43 @@ def register(plugin: Any) -> list[str]:
 
     async def groups_assign(payload: dict | None = None):
         d = await _payload(payload)
+        umos = d.get("umos")
+        if not isinstance(umos, (list, tuple)):
+            umos = [d.get("umo", "")]
         return await _wrap(lambda: assign_group(
-            plugin, str(d.get("umo", "")), str(d.get("group", ""))))
+            plugin, list(umos), str(d.get("group", ""))))
 
     async def groups_remove(payload: dict | None = None):
         d = await _payload(payload)
-        return await _wrap(lambda: remove_group(
-            plugin, str(d.get("umo", ""))))
+        umos = d.get("umos")
+        if not isinstance(umos, (list, tuple)):
+            umos = [d.get("umo", "")]
+        return await _wrap(lambda: remove_group(plugin, list(umos)))
 
-    async def groups_merge(payload: dict | None = None):
+    async def groups_create(payload: dict | None = None):
         d = await _payload(payload)
-        return await _wrap(lambda: merge_groups(
-            plugin, str(d.get("a", "")), str(d.get("b", ""))))
+        return await _wrap(lambda: create_group(
+            plugin, str(d.get("name", "")), str(d.get("persona", "")),
+            str(d.get("instance", "")), d.get("costars")))
+
+    async def groups_delete(payload: dict | None = None):
+        d = await _payload(payload)
+        return await _wrap(lambda: delete_group(plugin, str(d.get("name", ""))))
+
+    async def groups_persona(payload: dict | None = None):
+        d = await _payload(payload)
+        return await _wrap(lambda: set_group_persona(
+            plugin, str(d.get("group", "")), str(d.get("persona", ""))))
+
+    async def groups_costars(payload: dict | None = None):
+        d = await _payload(payload)
+        return await _wrap(lambda: set_group_costars(
+            plugin, str(d.get("group", "")), d.get("pids")))
+
+    async def groups_sync_cards(payload: dict | None = None):
+        d = await _payload(payload)
+        g = str(d.get("group") or _q("group") or "")
+        return await _wrap(lambda: plugin.sync_group_cards(group=g))
 
     async def groups_rename(payload: dict | None = None):
         d = await _payload(payload)
@@ -2543,11 +2738,15 @@ def register(plugin: Any) -> list[str]:
         "写入某 scope（平台/平台:类型/精确UMO）的特权覆盖")
     add("/session-privileges/clear", session_privileges_clear, ["POST"],
         "清除某 scope 的特权覆盖")
-    add("/groups", groups, ["GET"], "跨会话记忆组")
-    add("/groups/assign", groups_assign, ["POST"], "把会话归入记忆组")
-    add("/groups/remove", groups_remove, ["POST"], "移出记忆组")
-    add("/groups/merge", groups_merge, ["POST"], "合并两个会话到同一组")
-    add("/groups/rename", groups_rename, ["POST"], "重命名记忆组（保留成员）")
+    add("/groups", groups, ["GET"], "人格组：组定义 / 成员 / 未归组会话")
+    add("/groups/create", groups_create, ["POST"], "新建人格组")
+    add("/groups/delete", groups_delete, ["POST"], "删除人格组（成员转为独立）")
+    add("/groups/assign", groups_assign, ["POST"], "把一批会话加入人格组")
+    add("/groups/remove", groups_remove, ["POST"], "把一批会话移出人格组")
+    add("/groups/persona", groups_persona, ["POST"], "设置人格组的人格（组内同步）")
+    add("/groups/costars", groups_costars, ["POST"], "设置人格组的副人格（组内同步）")
+    add("/groups/sync-cards", groups_sync_cards, ["POST"], "把组内会话的群名片对齐到当前人格")
+    add("/groups/rename", groups_rename, ["POST"], "重命名人格组（保留成员）")
     add("/costars", costars, ["GET"], "多人格同台：启用会话与登场人格")
     add("/costars/remove", costars_remove, ["POST"],
         "把一个副人格移出某会话的同台")

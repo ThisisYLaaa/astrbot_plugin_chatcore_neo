@@ -14,7 +14,7 @@
   --bg0:#060a13; --bg1:#0a101d;
   --panel:rgba(16,23,40,.66); --panel2:rgba(22,31,52,.5);
   --line:rgba(136,160,208,.14); --line2:rgba(136,160,208,.28);
-  --fg:#e8edf7; --fg2:#9aa8c4; --fg3:#5f6d8c;
+  --fg:#eef2fb; --fg2:#c2cee6; --fg3:#93a3c4;
   --acc:#64f0c8; --acc2:#7dd3fc; --accink:#04241c;
   --ok:#6ee7a0; --warn:#ffc857; --bad:#ff6b81;
   --person:#6ee7a0; --topic:#64f0c8; --fact:#ffc857; --summary:#b48cff;
@@ -145,10 +145,10 @@ section.on .card:nth-child(8){animation-delay:.45s}
 }
 .card > h2::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--grad);box-shadow:0 0 8px rgba(100,240,200,.5);flex:none;transform:rotate(45deg)}
 .card > h2 .spacer{flex:1}
-.card > h2 .hint{color:var(--fg3);font-size:11px;font-weight:400;flex:1;min-width:120px;line-height:1.5}
+.card > h2 .hint{color:var(--fg3);font-size:12px;font-weight:400;flex:1;min-width:120px;line-height:1.5}
 .card .body{padding:16px 18px}
 .card .body.tight{padding:0}
-.hint{color:var(--fg3);font-size:12px;font-weight:400;line-height:1.55}
+.hint{color:var(--fg3);font-size:12.5px;font-weight:400;line-height:1.6}
 .empty{color:var(--fg3);text-align:center;padding:30px 16px;font-size:13px}
 
 /* ── 仪表数字砖 ── */
@@ -234,8 +234,8 @@ table.t-char th:nth-child(4),table.t-char td:nth-child(4){width:130px;white-spac
 .chk input[type="checkbox"]{width:auto;padding:0;margin:0;accent-color:#6ee7c0}
 
 /* ── 表单 ── */
-label.f{display:block;margin-bottom:11px}
-label.f > span{display:block;color:var(--fg3);font-size:11px;margin-bottom:5px;font-family:var(--mono);letter-spacing:.5px}
+label.f{display:block;margin-bottom:13px}
+label.f > span{display:block;color:var(--fg2);font-size:12.5px;font-weight:500;margin-bottom:6px;font-family:var(--sans);letter-spacing:.2px;line-height:1.45}
 input,select,textarea{
   font:inherit;color:var(--fg);background:rgba(6,11,22,.72);
   border:1px solid var(--line2);border-radius:10px;padding:7px 11px;width:100%;
@@ -894,6 +894,15 @@ const TABS = [
   ["raw",          "原始数据", "各接口的原始 JSON，排障用"],
 ];
 let ACTIVE = "overview";
+function instParam(){
+  const i = window.__CFG_INST__;
+  return (i && i !== "__default__") ? ("inst=" + encodeURIComponent(i)) : "";
+}
+function withInst(url){
+  const q = instParam();
+  if (!q) return url;
+  return url + (url.indexOf("?") >= 0 ? "&" : "?") + q;
+}
 const LOADERS = {};
 
 function pad2(n){ return (n < 10 ? "0" : "") + n; }
@@ -951,14 +960,15 @@ async function refresh(){
 
 /* ── 总览 ── */
 LOADERS.overview = async function(el){
-  const s = await get("/stats");
+  const wantInst = (window.__CFG_INST__ === "__default__") ? "" : (window.__CFG_INST__ || "");
+  const s = await get("/stats" + (wantInst ? "?inst=" + encodeURIComponent(wantInst) : ""));
   setHeaderPills(s);
   const p = s.plugin || {}, m = s.memory || {}, g = m.graph || {};
   // 残留体检：会话/用户残留来自 /sessions，主动消息脏键来自 /proactive
   await ensureSessions();
   let stalePro = [];
   try {
-    const pr = await get("/proactive");
+    const pr = await get(withInst("/proactive"));
     if (pr && Array.isArray(pr.stale_proactive)) stalePro = pr.stale_proactive;
   } catch (e) {}
   const staleSess = (SESSIONS.stale_sessions || []);
@@ -1046,6 +1056,26 @@ LOADERS.overview = async function(el){
       await refresh();
     });
   });
+
+  // 实例切换：总览的每个数字/开关都属于「当前实例」
+  const insts = s.instances || [];
+  if (insts.length) {
+    const cur = s.inst || "";
+    el.insertAdjacentHTML("afterbegin",
+      '<div class="card"><h2>实例'
+      + '<span class="hint">总览展示所选实例的子系统状态；切换后所有数字与开关都换成该实例的</span></h2>'
+      + '<div class="body"><div class="row"><label class="f" style="margin:0;max-width:260px">'
+      + '<span>当前实例</span><select id="ovInst">'
+      + insts.map(function(i){
+          return '<option value="' + esc(i) + '"' + (i === cur ? ' selected' : '') + '>'
+            + esc(i) + '</option>';
+        }).join("")
+      + '</select></label></div></div></div>');
+    on("ovInst", "change", function(){
+      window.__CFG_INST__ = val("ovInst");
+      LOADERS.overview(el).catch(function(e){ toast(e.message, true); });
+    });
+  }
 };
 
 function subsystemRows(s){
@@ -1654,7 +1684,7 @@ let memAtoms = [];
 async function loadMemory(){
   const umo = val("memUmo");
   if (!umo) return;
-  const d = await get("/memory?umo=" + encodeURIComponent(umo));
+  const d = await get(withInst("/memory?umo=" + encodeURIComponent(umo)));
   const st = d.stats || {}, g = st.graph || {};
   document.getElementById("memStats").innerHTML = kvCol([
     ["记忆键", d.key, "sm"], ["条目数", (d.atoms||[]).length],
@@ -1804,6 +1834,10 @@ LOADERS.graph = async function(el){
     + '<div class="body"><div class="duo wide">'
     + '<div><div class="vlist" id="graphStats"></div>'
     + '<div class="row" style="margin-top:12px">'
+    + '<label class="f" style="margin-bottom:0"><span>人格筛选</span>'
+    + '<select id="graphPersona"><option value="">全部人格</option></select></label>'
+    + '</div>'
+    + '<div class="row" style="margin-top:12px">'
     + '<label class="f" style="margin-bottom:0"><span>关键词检索（BM25）</span>'
     + '<input id="gQuery" placeholder="如 卡拉彼丘"></label>'
     + '<div class="fix"><button id="btnGSearch" style="margin-bottom:1px"'
@@ -1825,7 +1859,7 @@ LOADERS.graph = async function(el){
     busy(e.target, async function(){
       const q = val("gQuery").trim();
       if (!q) throw new Error("请先输入关键词");
-      const d = await get("/graph/search?q=" + encodeURIComponent(q) + "&k=12");
+      const d = await get(withInst("/graph/search?q=" + encodeURIComponent(q) + "&k=12"));
       const box2 = document.getElementById("gSearchOut");
       box2.innerHTML = (d.hits||[]).length
         ? '<table style="margin-top:12px"><thead><tr><th class="num">得分</th><th>类型</th><th>内容</th></tr></thead><tbody>'
@@ -1844,8 +1878,24 @@ let G = null;
 let GHANDLERS = [];   // 图谱的 window 级监听器：切换页签时必须摘掉，否则会累积
 
 async function loadGraph(){
-  const d = await get("/graph?limit=180");
+  const p = window.__GRAPH_PERSONA__ || "";
+  const d = await get(withInst("/graph?limit=180" + (p ? "&persona=" + encodeURIComponent(p) : "")));
   GRAPH = d;
+  const psel = document.getElementById("graphPersona");
+  if (psel && !psel.dataset.filled) {
+    const opts = (d.personas || []).map(function(x){
+      return '<option value="' + esc(x.id) + '">' + esc(x.name)
+        + '（' + x.count + '）</option>';
+    }).join("");
+    psel.innerHTML = '<option value="">全部人格</option>' + opts;
+    psel.value = p;
+    psel.dataset.filled = "1";
+    psel.addEventListener("change", function(){
+      window.__GRAPH_PERSONA__ = psel.value;
+      psel.dataset.filled = "";
+      loadGraph().catch(function(e){ toast(e.message, true); });
+    });
+  }
   const st = d.stats || {};
   document.getElementById("graphStats").innerHTML = kvCol([
     ["节点", st.nodes], ["边", st.edges], ["图谱条目", st.entries],
@@ -2062,7 +2112,7 @@ function fitGraph(){
 async function showNode(key){
   const box = document.getElementById("graphNode");
   box.innerHTML = '<div class="card"><div class="body"><div class="empty">读取节点…</div></div></div>';
-  const d = await get("/graph/node?key=" + encodeURIComponent(key));
+  const d = await get(withInst("/graph/node?key=" + encodeURIComponent(key)));
   if (d.error) {
     box.innerHTML = '<div class="card"><div class="body"><div class="empty">'
       + esc(d.error) + '</div></div></div>';
@@ -2103,7 +2153,7 @@ async function showNode(key){
 /* ── 注意力 ── */
 LOADERS.attention = async function(el){
   await ensureSessions();
-  const d = await get("/attention");
+  const d = await get(withInst("/attention"));
   const rows = d.rows || [], cfg = d.config || {}, j = d.judge || {};
   const jrows = Object.keys(j).map(function(k){
     const v = j[k];
@@ -2164,7 +2214,7 @@ LOADERS.attention = async function(el){
 
 /* ── 交互 ── */
 LOADERS.interactions = async function(el){
-  const d = await get("/interactions");
+  const d = await get(withInst("/interactions"));
   const c = d.config || {};
   // 分段提示词编辑器：依赖插件新代码，没重载会 404，给降级提示
   let sp = null;
@@ -2303,7 +2353,7 @@ LOADERS.interactions = async function(el){
 /* ── 主动消息 ── */
 LOADERS.proactive = async function(el){
   await ensureSessions();
-  const d = await get("/proactive");
+  const d = await get(withInst("/proactive"));
   const c = d.config || {};
   const rep = d.report || {};
   const cands = d.candidates || [];
@@ -2803,120 +2853,202 @@ LOADERS["session-params"] = async function(el){
 
 /* ── 记忆组 ── */
 LOADERS.groups = async function(el){
-  await ensureSessions();
   const d = await get("/groups");
-  const g = d.groups || {};
-  const grouped = {};
-  Object.keys(g).forEach(function(name){
-    g[name].forEach(function(u){ grouped[u] = name; });
-  });
-  const opts = SESSIONS.sessions.map(function(s){
-    return '<option value="' + esc(s.umo) + '">' + esc(sessOptionText(s))
-      + (grouped[s.umo] ? "（已在组 " + esc(grouped[s.umo]) + "）" : "") + '</option>';
-  }).join("") || '<option value="">（无会话）</option>';
-  const sessDatalist = SESSIONS.sessions.map(function(s){
-    return '<option value="' + esc(s.umo) + '">' + esc(sessOptionText(s)) + '</option>';
-  }).join("");
-  const groupDatalist = Object.keys(g).map(function(name){
-    return '<option value="' + esc(name) + '">'; }).join("");
-  const groupRows = Object.keys(g).map(function(name){
-    const memberHtml = g[name].map(function(u){
-      return '<div style="display:flex;align-items:center;gap:6px;margin:2px 0">'
-        + '<span class="mono" style="font-size:11.5px;flex:1;min-width:0;'
-        + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(u) + '">'
-        + esc(sessLabel(u)) + '</span>'
-        + '<button class="danger bx" data-umo="' + esc(u) + '" data-grp="' + esc(name) + '"'
-        + ' title="把这个成员移出组 ' + esc(name) + '">移出</button></div>';
-    }).join("");
-    return '<tr><td style="vertical-align:top"><b>' + esc(name) + '</b><div class="hint">'
-      + g[name].length + ' 个成员</div>'
-      + '<button class="bx" data-rename="' + esc(name) + '" style="margin-top:6px"'
-      + ' title="重命名组 ' + esc(name) + '（保留全部成员）">重命名</button></td>'
-      + '<td>' + (memberHtml || '<span class="hint">（空）</span>') + '</td></tr>';
-  }).join("") || '<tr><td colspan="2" class="empty">还没有任何记忆组</td></tr>';
-  el.innerHTML =
-    '<div class="card"><h2>跨会话记忆组'
-    + '<span class="hint">归到同一组的会话共享同一份长期记忆。'
-    + '例如同一个人在 BotA 和 BotB 两个适配器下，可以并成一组</span></h2>'
-    + '<div class="body"><div class="row">'
-    + '<label class="f"><span>会话</span><select id="grUmo" class="sess">' + opts + '</select></label>'
-    + '<label class="f"><span>组名（可下拉选现有组，或输入新组名）</span>'
-    + '<input id="grName" list="grNameList" placeholder="如 示例组_A">'
-    + '<datalist id="grNameList">' + groupDatalist + '</datalist></label>'
-    + '<div class="fix"><button class="primary" id="btnGrAssign"'
-    + ' title="把该会话归入指定组">归入组</button></div>'
-    + '<div class="fix"><button class="danger" id="btnGrRemove"'
-    + ' title="把该会话移出它所在的组">移出组</button></div>'
-    + '</div><div class="row">'
-    + '<label class="f"><span>合并：会话 A</span><input id="grA" list="grSessList" placeholder="umo A">'
-    + '<datalist id="grSessList">' + sessDatalist + '</datalist></label>'
-    + '<label class="f"><span>合并：会话 B</span><input id="grB" list="grSessList2" placeholder="umo B">'
-    + '<datalist id="grSessList2">' + sessDatalist + '</datalist></label>'
-    + '<div class="fix"><button id="btnGrMerge"'
-    + ' title="把两个会话并到同一个组（已有组则并入）">合并为一个组</button></div>'
-    + '</div></div></div>'
-    + '<div class="card"><h2>现有分组 '
-    + '<span class="hint">共 ' + esc((d.stats||{}).groups||0) + ' 组 / '
-    + esc((d.stats||{}).members||0) + ' 个会话 · 组名可重命名，成员可单独移出</span></h2>'
-    + '<div class="body tight"><div class="scroll fill-h2"><table>'
-    + '<thead><tr><th>组名</th><th>成员会话</th></tr></thead><tbody>'
-    + groupRows + '</tbody></table></div></div></div>'
-    + '<div class="card"><h2>未归组会话 '
-    + '<span class="hint">共 ' + (d.ungrouped||[]).length + ' 个</span></h2>'
-    + '<div class="body">'
-    + ((d.ungrouped||[]).map(function(u){
-        return '<span class="tag" style="font-size:11px" title="' + esc(u) + '">'
-          + esc(sessLabel(u)) + '</span>';
-      }).join("") || '<div class="empty">无</div>')
-    + '</div></div>';
+  const groups = d.groups || {};
+  const personas = d.personas || [];
+  const insts = d.instances || [];
+  const grants = {}; insts.forEach(function(i){ grants[i.id] = new Set(i.grants || []); });
+  const byId = {}; personas.forEach(function(p){ byId[p.id] = p; });
+  function pname(id){ return byId[id] ? byId[id].name : id; }
+  function q(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/"/g,'\\"'); }
+  const groupNames = Object.keys(groups);
 
-  on("btnGrAssign", "click", function(e){
-    busy(e.target, async function(){
-      const name = val("grName").trim();
-      if (!name) throw new Error("请先填组名");
-      await post("/groups/assign", {umo: val("grUmo"), group: name});
-      toast("已归入组 " + name);
-      await refresh();
-    });
+  const rows = [];
+  groupNames.forEach(function(g){
+    (groups[g].members || []).forEach(function(u){ rows.push({umo: u, group: g}); });
   });
-  on("btnGrRemove", "click", function(e){
-    busy(e.target, async function(){
-      await post("/groups/remove", {umo: val("grUmo")});
-      toast("已移出组");
-      await refresh();
-    });
+  (d.ungrouped || []).forEach(function(u){ rows.push({umo: u, group: ""}); });
+  rows.sort(function(a,b){ return a.umo.localeCompare(b.umo); });
+
+  function personaOpts(inst, cur){
+    const allow = grants[inst];
+    return '<option value="">（未设置）</option>' + personas
+      .filter(function(p){ return !allow || allow.has(p.id) || p.id === cur; })
+      .map(function(p){
+        return '<option value="' + esc(p.id) + '"' + (p.id === cur ? ' selected' : '') + '>'
+          + esc(p.name) + '</option>';
+      }).join("");
+  }
+
+  function groupCard(name, meta){
+    const inst = meta.instance || "";
+    const members = meta.members || [];
+    const cs = meta.costars || [];
+    const memRows = members.map(function(u){
+      return '<div style="display:flex;align-items:center;gap:6px;margin:2px 0">'
+        + '<span class="mono" style="font-size:11.5px;flex:1;min-width:0;overflow:hidden;'
+        + 'text-overflow:ellipsis;white-space:nowrap" title="' + esc(u) + '">'
+        + esc(sessLabel(u)) + '</span>'
+        + '<button class="danger bx g-mem-rm" data-umo="' + esc(u) + '">移出</button></div>';
+    }).join("") || '<span class="hint">（空组）</span>';
+    const csTags = cs.map(function(p){
+      return '<span class="tag" style="font-size:11px;margin:2px 4px 2px 0">' + esc(pname(p))
+        + '<span class="g-cs-rm" data-group="' + esc(name) + '" data-pid="' + esc(p)
+        + '" style="cursor:pointer;margin-left:6px;opacity:.7">×</span></span>';
+    }).join("") || '<span class="hint">（无）</span>';
+    return '<div class="card" data-group="' + esc(name) + '" style="margin:10px 0">'
+      + '<h2 style="font-size:14px">' + esc(name)
+      + '<span class="hint">实例 ' + esc(inst || '-') + ' · ' + members.length + ' 个会话</span>'
+      + '<span class="spacer"></span>'
+      + '<button class="bx g-card" data-group="' + esc(name) + '"'
+      + ' title="把本组会话的群名片改成当前人格">同步群名片</button>'
+      + '<button class="bx g-ren" data-group="' + esc(name) + '" title="重命名">重命名</button>'
+      + '<button class="danger bx g-del" data-group="' + esc(name) + '"'
+      + ' title="删除组（成员转为独立，记忆不删）">删除</button></h2>'
+      + '<div class="body">'
+      + '<div class="row"><label class="f"><span>组人格（组内同步）</span>'
+      + '<select class="g-persona" data-group="' + esc(name) + '">'
+      + personaOpts(inst, meta.persona || "") + '</select></label>'
+      + '<label class="f"><span>副人格（当前：' + csTags + '）</span>'
+      + '<input class="g-costars" data-group="' + esc(name) + '" value="'
+      + esc(cs.join(",")) + '" placeholder="人格 id，逗号分隔"></label>'
+      + '<div class="fix"><button class="primary bx g-cs-save" data-group="'
+      + esc(name) + '">保存副人格</button></div></div>'
+      + '<div class="hint" style="margin:8px 0 4px">成员</div>'
+      + '<div class="scroll" style="max-height:220px">' + memRows + '</div>'
+      + '</div></div>';
+  }
+
+  const cards = groupNames.map(function(n){ return groupCard(n, groups[n]); }).join("")
+    || '<div class="empty">还没有人格组</div>';
+
+  const sessRows = rows.map(function(r){
+    return '<tr data-umo="' + esc(r.umo) + '">'
+      + '<td style="width:28px"><input type="checkbox" class="g-pick" value="' + esc(r.umo) + '"></td>'
+      + '<td class="mono" style="font-size:11.5px" title="' + esc(r.umo) + '">' + esc(sessLabel(r.umo)) + '</td>'
+      + '<td>' + (r.group ? '<span class="tag">' + esc(r.group) + '</span>'
+                          : '<span class="hint">—</span>') + '</td></tr>';
+  }).join("") || '<tr><td colspan="3" class="empty">没有会话</td></tr>';
+
+  el.innerHTML =
+    '<div class="card"><h2>新建人格组'
+    + '<span class="hint">一个实例下可以有多个组；每组一个人格，组内共享记忆并同步人格/副人格</span></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>组名</span><input id="ngName" placeholder="如 卡丘主力组"></label>'
+    + '<label class="f"><span>实例</span><select id="ngInst">'
+    + insts.map(function(i){ return '<option value="' + esc(i.id) + '">' + esc(i.id) + '</option>'; }).join("")
+    + '</select></label>'
+    + '<label class="f"><span>人格</span><select id="ngPersona"><option value="">（稍后设置）</option>'
+    + personas.map(function(p){ return '<option value="' + esc(p.id) + '">' + esc(p.name) + '</option>'; }).join("")
+    + '</select></label>'
+    + '<div class="fix"><button class="primary" id="btnNgCreate">创建</button></div>'
+    + '</div></div></div>'
+    + '<div class="card"><h2>会话归组'
+    + '<span class="hint">勾选后批量加入 / 移出；同一组只能属于一个实例</span>'
+    + '<span class="spacer"></span><input id="gSearch" placeholder="搜索会话" style="width:200px"></h2>'
+    + '<div class="body"><div class="row">'
+    + '<label class="f"><span>目标组</span><select id="gTarget">'
+    + groupNames.map(function(n){ return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join("")
+    + '</select></label>'
+    + '<div class="fix"><button class="primary" id="btnGJoin">加入所选</button></div>'
+    + '<div class="fix"><button class="danger" id="btnGLeave">移出所选</button></div>'
+    + '<div class="fix"><button class="bx" id="btnGAll">全选/反选</button></div>'
+    + '<div class="fix"><button class="bx" id="btnGCards"'
+    + ' title="把所有已入组会话的群名片对齐到当前人格">修复全部群名片</button></div>'
+    + '</div><div class="scroll" style="max-height:300px"><table>'
+    + '<thead><tr><th></th><th>会话</th><th>当前组</th></tr></thead>'
+    + '<tbody id="gSessBody">' + sessRows + '</tbody></table></div>'
+    + '</div></div>'
+    + '<div id="gCards"><h2 style="margin:18px 0 6px">现有组（' + groupNames.length + '）</h2>'
+    + cards + '</div>';
+
+  function picked(){ return Array.prototype.map.call(
+    el.querySelectorAll(".g-pick:checked"), function(n){ return n.value; }); }
+  async function reload(){ await LOADERS.groups(el); }
+  async function act(url, body){
+    try { await post(url, body); await reload(); }
+    catch(e){ toast(e.message || String(e), true); }
+  }
+
+  el.querySelector("#btnNgCreate").onclick = function(){
+    const name = el.querySelector("#ngName").value.trim();
+    if(!name) { toast("请填组名", true); return; }
+    act("/groups/create", {name: name,
+      instance: el.querySelector("#ngInst").value,
+      persona: el.querySelector("#ngPersona").value});
+  };
+  el.querySelector("#btnGJoin").onclick = function(){
+    const us = picked(), g = el.querySelector("#gTarget").value;
+    if(!us.length) { toast("先勾选会话", true); return; }
+    if(!g) { toast("先选目标组", true); return; }
+    act("/groups/assign", {umos: us, group: g});
+  };
+  el.querySelector("#btnGLeave").onclick = function(){
+    const us = picked();
+    if(!us.length) { toast("先勾选会话", true); return; }
+    act("/groups/remove", {umos: us});
+  };
+  el.querySelector("#btnGAll").onclick = function(){
+    const all = Array.prototype.slice.call(el.querySelectorAll(".g-pick"));
+    const every = all.every(function(n){ return n.checked; });
+    all.forEach(function(n){ n.checked = !every; });
+  };
+  async function actSync(body){
+    try {
+      const r = await post("/groups/sync-cards", body);
+      toast("群名片：成功 " + (r.ok || 0) + " / " + (r.total || 0)
+            + (r.failed ? "，失败 " + r.failed : ""));
+      await reload();
+    } catch(e){ toast(e.message || String(e), true); }
+  }
+  el.querySelector("#btnGCards").onclick = function(){ actSync({}); };
+  el.querySelectorAll(".g-card").forEach(function(b){
+    b.onclick = function(){ actSync({group: b.dataset.group}); };
   });
-  on("btnGrMerge", "click", function(e){
-    busy(e.target, async function(){
-      const a = val("grA").trim(), b = val("grB").trim();
-      if (!a || !b) throw new Error("请填两个会话");
-      const r = await post("/groups/merge", {a: a, b: b});
-      toast("已合并为组 " + r.group);
-      await refresh();
+  el.querySelector("#gSearch").oninput = function(){
+    const kw = this.value.trim().toLowerCase();
+    el.querySelectorAll("#gSessBody tr").forEach(function(tr){
+      const t = (tr.textContent || "").toLowerCase();
+      tr.style.display = (!kw || t.indexOf(kw) >= 0) ? "" : "none";
     });
+  };
+  el.querySelectorAll(".g-persona").forEach(function(s){
+    s.onchange = function(){ act("/groups/persona", {group: s.dataset.group, persona: s.value}); };
   });
-  // 表格里的行内操作：移出成员 / 重命名组（按钮是动态生成的，用委托绑定）
-  el.querySelectorAll(".bx").forEach(function(b){
-    b.addEventListener("click", function(){
-      busy(b, async function(){
-        if (b.dataset.umo) {
-          if (!(await askConfirm("确定把 " + b.dataset.umo + " 移出组 " + b.dataset.grp + "？"))) return;
-          await post("/groups/remove", {umo: b.dataset.umo});
-          toast("已把 " + b.dataset.umo + " 移出组");
-          await refresh();
-        } else if (b.dataset.rename) {
-          const nn = await askPrompt("重命名组 " + b.dataset.rename + " 为：", b.dataset.rename);
-          if (!nn || !nn.trim() || nn.trim() === b.dataset.rename) return;
-          const r = await post("/groups/rename", {old: b.dataset.rename, new: nn.trim()});
-          toast("已重命名为 " + r.group);
-          await refresh();
-        }
-      });
-    });
+  el.querySelectorAll(".g-cs-save").forEach(function(b){
+    b.onclick = function(){
+      const inp = el.querySelector('.g-costars[data-group="' + q(b.dataset.group) + '"]');
+      const pids = (inp.value || "").split(/[,，\s]+/).filter(Boolean);
+      act("/groups/costars", {group: b.dataset.group, pids: pids});
+    };
+  });
+  el.querySelectorAll(".g-cs-rm").forEach(function(x){
+    x.onclick = function(){
+      const g = x.dataset.group;
+      const cur = ((groups[g] || {}).costars || []).filter(function(p){ return p !== x.dataset.pid; });
+      act("/groups/costars", {group: g, pids: cur});
+    };
+  });
+  el.querySelectorAll(".g-mem-rm").forEach(function(b){
+    b.onclick = function(){ act("/groups/remove", {umos: [b.dataset.umo]}); };
+  });
+  el.querySelectorAll(".g-ren").forEach(function(b){
+    b.onclick = function(){
+      const nn = prompt("新组名", b.dataset.group);
+      if(nn && nn.trim() && nn.trim() !== b.dataset.group){
+        act("/groups/rename", {old: b.dataset.group, new: nn.trim()});
+      }
+    };
+  });
+  el.querySelectorAll(".g-del").forEach(function(b){
+    b.onclick = async function(){
+      const yes = await askConfirm("删除人格组「" + b.dataset.group
+        + "」？成员会变成独立会话（记忆不删）。", {ok: "删除"});
+      if(yes) act("/groups/delete", {name: b.dataset.group});
+    };
   });
 };
 
-/* ── 装配预览 ── */
 LOADERS.preview = async function(el){
   const ps = await get("/personas");
   el.innerHTML =
@@ -3221,20 +3353,19 @@ on("btnReload", "click", function(e){
   });
 });
 LOADERS["persona-pool"] = async function(el){
-  const d = await get("/persona-pool");
-  const personas = d.personas || [];
-  const insts = d.instances || [];
-  const defaults = d.defaults || {};
-  const byId = {};
-  personas.forEach(function(p){ byId[p.id] = p; });
-  const grantedOf = {};
-  personas.forEach(function(p){ grantedOf[p.id] = p.granted || []; });
+  const d0 = await get("/persona-pool");
+  const defaults0 = d0.defaults || {};
 
-  function chip(p, inRow, inst){
-    const g = grantedOf[p.id] || [];
-    const badge = inRow ? "" : (g.length
-      ? '<span class="tag" style="font-size:10px" title="已授权给：' + esc(g.join("、")) + '">已授 ' + g.length + '</span>' : "");
-    return '<div class="pp-chip" ' + (inRow ? '' : 'draggable="true"')
+  function idx(d){ const m={}; (d.personas||[]).forEach(function(p){ m[p.id]=p; }); return m; }
+  function q(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/"/g,'\\"'); }
+
+  function chipHtml(p, inRow, inst, granted){
+    const g = granted || [];
+    const badge = inRow ? "" : '<span class="tag pp-badge"'
+      + (g.length ? ' style="font-size:10px" title="已授权给：' + esc(g.join("、")) + '"'
+                  : ' style="display:none;font-size:10px"')
+      + '>' + (g.length ? '已授 ' + g.length : '') + '</span>';
+    return '<div class="pp-chip" ' + (inRow ? '' : 'draggable="true" data-left="1"')
       + ' data-pid="' + esc(p.id) + '"'
       + (inRow ? ' data-inrow="1" data-inst="' + esc(inst) + '"' : '')
       + ' style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;margin:3px;'
@@ -3249,16 +3380,13 @@ LOADERS["persona-pool"] = async function(el){
       + '</div>';
   }
 
-  const left = personas.map(function(p){ return chip(p, false, ""); }).join("")
-    || '<div class="empty">人格池为空</div>';
-
-  const rows = insts.map(function(it){
+  function rowHtml(it, byId, defaults){
     const g = (it.grants || []).map(function(pid){
       return byId[pid] || {id: pid, display_name: pid + "（缺失）", world: ""};
     });
-    const chips = g.map(function(p){ return chip(p, true, it.id); }).join("")
+    const chips = g.map(function(p){ return chipHtml(p, true, it.id, []); }).join("")
       || '<span class="hint">（空 —— 把左侧人格拖到这里）</span>';
-    const cur = defaults[it.id] || "";
+    const cur = (defaults || {})[it.id] || "";
     const sel = '<select data-def="' + esc(it.id) + '" style="min-width:160px">'
       + '<option value=""' + (cur ? '' : ' selected') + '>（未设置）</option>'
       + (it.grants || []).map(function(pid){
@@ -3278,69 +3406,92 @@ LOADERS["persona-pool"] = async function(el){
       + '<span style="flex:1"></span><span class="hint">默认人格</span>' + sel + '</div>'
       + '<div class="pp-drop" data-inst="' + esc(it.id) + '" style="min-height:46px;padding:4px;'
       + 'border:1px dashed rgba(127,127,127,.45);border-radius:6px">' + chips + '</div></div>';
-  }).join("") || '<div class="empty">没有检测到实例</div>';
+  }
 
+  const byId0 = idx(d0);
   el.innerHTML = '<div class="card"><h2>人格分配'
     + '<span class="hint">把左侧人格<b>拖</b>到右侧实例的虚线框 = 该实例可以使用这个人格；'
     + '一个人格可以同时授权给多个实例。一个人格都没授的实例将跳过人格注入。</span></h2>'
     + '<div class="body"><div style="display:flex;gap:14px;align-items:flex-start">'
     + '<div style="width:300px;flex:0 0 300px">'
     + '<input id="ppSearch" placeholder="搜索人格名 / id / 世界观" style="width:100%;margin-bottom:6px">'
-    + '<div class="scroll" style="max-height:64vh" id="ppLeft">' + left + '</div></div>'
-    + '<div style="flex:1;min-width:0"><div class="scroll" style="max-height:64vh">' + rows + '</div></div>'
-    + '</div></div></div>';
+    + '<div class="scroll" style="max-height:64vh" id="ppLeft">'
+    + (d0.personas || []).map(function(p){ return chipHtml(p, false, "", p.granted); }).join("")
+    + '</div></div>'
+    + '<div style="flex:1;min-width:0"><div class="scroll" style="max-height:64vh" id="ppRight">'
+    + (d0.instances || []).map(function(it){ return rowHtml(it, byId0, defaults0); }).join("")
+    + '</div></div></div></div></div>';
 
-  async function rerender(){ await LOADERS["persona-pool"](el); }
+  function patch(d){
+    const byId = idx(d);
+    const defs = d.defaults || {};
+    (d.personas || []).forEach(function(p){
+      const c = el.querySelector('.pp-chip[data-left="1"][data-pid="' + q(p.id) + '"]');
+      if (!c) return;
+      const b = c.querySelector('.pp-badge');
+      if (!b) return;
+      const n = (p.granted || []).length;
+      if (n) { b.style.display = ""; b.textContent = '已授 ' + n;
+               b.title = '已授权给：' + p.granted.join('、'); }
+      else { b.style.display = "none"; b.textContent = ""; }
+    });
+    (d.instances || []).forEach(function(it){
+      const r = el.querySelector('.pp-row[data-inst="' + q(it.id) + '"]');
+      if (r) r.outerHTML = rowHtml(it, byId, defs);
+    });
+  }
+
+  async function doPost(url, body){
+    try {
+      const d = await post(url, body);
+      patch(d);
+    } catch(err){ toast("失败：" + (err.message || err)); }
+  }
+
+  // 一次性委托绑定：行重建后依然有效，不再整页重绘
+  if (!el.dataset.ppBound){
+    el.dataset.ppBound = "1";
+    el.addEventListener("dragstart", function(e){
+      const c = e.target.closest && e.target.closest('.pp-chip[draggable="true"]');
+      if (!c) return;
+      e.dataTransfer.setData("text/plain", c.getAttribute("data-pid"));
+      e.dataTransfer.effectAllowed = "copy";
+    });
+    el.addEventListener("dragover", function(e){
+      const z = e.target.closest && e.target.closest(".pp-drop");
+      if (z) { e.preventDefault(); z.style.borderColor = "var(--ac,#5af)"; }
+    });
+    el.addEventListener("dragleave", function(e){
+      const z = e.target.closest && e.target.closest(".pp-drop");
+      if (z) z.style.borderColor = "";
+    });
+    el.addEventListener("drop", function(e){
+      const z = e.target.closest && e.target.closest(".pp-drop");
+      if (!z) return;
+      e.preventDefault(); z.style.borderColor = "";
+      const pid = e.dataTransfer.getData("text/plain");
+      if (pid) doPost("/persona-pool/grant", {inst: z.getAttribute("data-inst"), pid: pid});
+    });
+    el.addEventListener("click", function(e){
+      const x = e.target.closest && e.target.closest(".pp-x");
+      if (!x) return;
+      doPost("/persona-pool/revoke",
+        {inst: x.getAttribute("data-inst"), pid: x.getAttribute("data-pid")});
+    });
+    el.addEventListener("change", function(e){
+      const s = e.target;
+      if (!s || !s.matches || !s.matches("select[data-def]")) return;
+      doPost("/persona-pool/default",
+        {inst: s.getAttribute("data-def"), pid: s.value});
+    });
+  }
 
   const s = el.querySelector("#ppSearch");
   if (s) s.addEventListener("input", function(){
-    const q = s.value.trim().toLowerCase();
+    const kw = s.value.trim().toLowerCase();
     el.querySelectorAll("#ppLeft .pp-chip").forEach(function(n){
       const t = (n.textContent || "").toLowerCase() + " " + (n.getAttribute("title") || "").toLowerCase();
-      n.style.display = (!q || t.indexOf(q) >= 0) ? "" : "none";
-    });
-  });
-
-  el.querySelectorAll('.pp-chip[draggable="true"]').forEach(function(n){
-    n.addEventListener("dragstart", function(e){
-      e.dataTransfer.setData("text/plain", n.getAttribute("data-pid"));
-      e.dataTransfer.effectAllowed = "copy";
-    });
-  });
-
-  el.querySelectorAll(".pp-drop").forEach(function(z){
-    z.addEventListener("dragover", function(e){
-      e.preventDefault(); z.style.borderColor = "var(--ac,#5af)";
-    });
-    z.addEventListener("dragleave", function(){ z.style.borderColor = ""; });
-    z.addEventListener("drop", async function(e){
-      e.preventDefault(); z.style.borderColor = "";
-      const pid = e.dataTransfer.getData("text/plain");
-      if (!pid) return;
-      try {
-        await post("/persona-pool/grant", {inst: z.getAttribute("data-inst"), pid: pid});
-        toast("已授权"); await rerender();
-      } catch(err){ toast("授权失败：" + (err.message || err)); }
-    });
-  });
-
-  el.querySelectorAll(".pp-x").forEach(function(n){
-    n.addEventListener("click", async function(){
-      try {
-        await post("/persona-pool/revoke",
-          {inst: n.getAttribute("data-inst"), pid: n.getAttribute("data-pid")});
-        toast("已撤销"); await rerender();
-      } catch(err){ toast("撤销失败：" + (err.message || err)); }
-    });
-  });
-
-  el.querySelectorAll("select[data-def]").forEach(function(sel){
-    sel.addEventListener("change", async function(){
-      try {
-        await post("/persona-pool/default",
-          {inst: sel.getAttribute("data-def"), pid: sel.value});
-        toast("默认人格已更新");
-      } catch(err){ toast("设置失败：" + (err.message || err)); await rerender(); }
+      n.style.display = (!kw || t.indexOf(kw) >= 0) ? "" : "none";
     });
   });
 };

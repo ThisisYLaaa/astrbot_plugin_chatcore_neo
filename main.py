@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from astrbot.api.star import Context, Star
 from .core import compat, paths, world as world_mod
 from .core.attention import AttentionManager
 from .core.groups import MemoryGroups
+from .core.group_journal import GroupJournal
 from .core.impression import ImpressionSummarizer
 from .core.interactions import (MergeGate, PokeHandler, build_quote_block,
                                 extract_reply_target, is_poke_event,
@@ -69,6 +71,46 @@ _CUR_INST: ContextVar[str] = ContextVar("ccn_inst", default="")
 def inst_of_umo(umo: str) -> str:
     """`BotA:GroupMessage:123` -> `BotA`。"""
     return str(umo or "").split(":", 1)[0]
+
+
+class _DropNoise(logging.Filter):
+    """丢掉含指定文案的日志记录（目前只用于框架那条每轮都刷的警告）。"""
+
+    def __init__(self, needles: tuple[str, ...]) -> None:
+        super().__init__()
+        self.needles = needles
+
+    def filter(self, record) -> bool:                 # noqa: A003
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not any(n in msg for n in self.needles)
+
+
+def _install_log_noise_filter() -> None:
+    """屏蔽框架的 `pre-send event hook` 警告。
+
+    框架在「流式 + 存在 on_decorating_result 处理器」时每条消息都打一次
+    `Plugins that depend on the pre-send event hook may not work correctly…`。
+    本插件对流式结果是**显式处理**的（见 `_stream_deliver` 与
+    `on_decorating_result` 里的 STREAMING_RESULT 分支），这条警告对本插件
+    是误报，留着只会把日志刷满。
+    """
+    f = _DropNoise(("pre-send event hook",))
+    targets = []
+    try:
+        targets.append(logging.getLogger("astrbot"))
+        targets.extend(logging.getLogger().handlers)
+        targets.extend(logging.getLogger("astrbot").handlers)
+    except Exception:
+        pass
+    for t in targets:
+        try:
+            if not any(isinstance(x, _DropNoise) for x in t.filters):
+                t.addFilter(f)
+        except Exception:
+            pass
 
 
 class _MemProxy:
@@ -182,6 +224,7 @@ class ChatCoreNeoPlugin(Star):
         super().__init__(context)
         self.config = config
         paths.ensure_dirs()
+        _install_log_noise_filter()
 
         # ---- 实例化：必须早于任何 _cfg 调用 ----
         self._mem_cache: dict = {}
@@ -213,6 +256,8 @@ class ChatCoreNeoPlugin(Star):
         self.templates = compat.EventTemplateStore()
         # 跨会话记忆组：记忆按组键存取，多会话共享一份
         self.groups = MemoryGroups()
+        # 组内近况流水：同一用户在**其他会话**里刚说过的话（1 小时窗口）
+        self.group_journal = GroupJournal(paths.STATE_DIR / "_group_recent.jsonl")
         # 多人格同台：会话级副人格列表（仅剧情模式生效，见 core/costars.py）
         self.costars = CoStarStore()
         self.assembler = PromptAssembler()
@@ -223,7 +268,7 @@ class ChatCoreNeoPlugin(Star):
         # 人格切换提醒（umo -> 提醒文本）：/persona 切换后记下，
         # 在下一轮装配时以"系统通知"注入动态段，强制模型切换到新身份。
         # 不记的话，旧人格在历史上下文里刷过几十条，模型会沿惯性继续扮演
-        # 旧角色（实测：切到示例人格后仍以"香奈美"自称回复）。
+        # 旧角色（实测：切到半言后仍以"香奈美"自称回复）。
         self._persona_switch_notice: dict = {}
         self._mem_tasks: set = set()
         self._char_seeded: set = set()
@@ -326,6 +371,43 @@ class ChatCoreNeoPlugin(Star):
         # 全局开关（`enable_proactive`）只负责**放行**：它关着就不启动，会话级
         # 配置一律不作数；它开着也只是"允许使用"，不会替任何会话开口
         # ——谁开口由「分会话配置」的 opt-in 决定（见 proactive.should_emit）。
+
+        # 启动后把已入组会话的群名片对齐一次：
+        # 历史上有"人格换了、群名片还是旧的"的会话，靠这条自愈。
+        async def _boot_card_sync() -> None:
+            # 平台适配器是**插件加载之后**才连上的（实测慢 0.5~3 秒，冷启动更久），
+            # 所以不能只等 6 秒：全失败就继续等，最多三轮。
+            waits = (20, 25, 45)
+            last: dict = {}
+            for w in waits:
+                await asyncio.sleep(w)
+                try:
+                    last = await self.sync_group_cards()
+                except Exception as e:
+                    logger.debug(f"[chatcore_neo] 群名片对齐失败: {e!r}")
+                    continue
+                if last.get("ok") or not last.get("total") or not last.get("failed"):
+                    break
+            if last.get("total"):
+                msg = (f"[chatcore_neo] 群名片对齐：成功 {last.get('ok', 0)}"
+                       f" / 跳过 {last.get('skipped', 0)}"
+                       f" / 失败 {last.get('failed', 0)}"
+                       f"（共 {last['total']}）")
+                if last.get("failed"):
+                    reasons = last.get("reasons") or {}
+                    top = sorted(reasons.items(), key=lambda kv: -kv[1])[:3]
+                    if top:
+                        msg += "；原因：" + "、".join(f"{k}×{v}" for k, v in top)
+                    if last.get("fail_umos"):
+                        msg += "；失败会话：" + "、".join(last["fail_umos"][:4])
+                    logger.warning(msg)
+                else:
+                    logger.info(msg)
+
+        try:
+            self._spawn(_boot_card_sync())
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ 配置
     @staticmethod
@@ -599,11 +681,176 @@ class ChatCoreNeoPlugin(Star):
             return False
         return eff_mode == MODE_NARRATIVE
 
+    def _costars_for(self, umo: str) -> list[str]:
+        """该会话生效的副人格列表：人格组优先，否则用会话自己的。"""
+        try:
+            if self.groups.in_group(umo):
+                return self.groups.costars_of(self.groups.group_of(umo))
+        except Exception:
+            pass
+        return self.costars.cast_of(umo)
+
+    def _set_costars(self, umo: str, pids) -> list[str]:
+        """写入副人格；会话在人格组里时改的是**整组**（并同步到每个成员）。"""
+        clean: list[str] = []
+        for p in (pids or []):
+            s = str(p).strip()
+            if s and s not in clean:
+                clean.append(s)
+        try:
+            if self.groups.in_group(umo):
+                gname = self.groups.group_of(umo)
+                self.groups.set_costars(gname, clean)
+                for u in self.groups.members(gname):
+                    self.costars.set(u, clean)
+                return clean
+        except Exception as e:
+            logger.warning(f"[chatcore_neo] 同步人格组副人格失败: {e!r}")
+        return self.costars.set(umo, clean)
+
+    def _platform_client(self, inst: str):
+        """按实例 id 取平台客户端（aiocqhttp 的 CQHttp），拿不到返回 None。"""
+        try:
+            for p in self.context.platform_manager.get_insts():
+                meta = getattr(p, "metadata", None)
+                if getattr(meta, "id", "") != inst:
+                    continue
+                if hasattr(p, "get_client"):
+                    return p.get_client()
+        except Exception:
+            pass
+        return None
+
+    async def _set_group_card(self, umo: str, doc, bot=None) -> str:
+        """把群名片改成 `group_card_template`（`{name}` → 人格中文名）。
+
+        返回 `"ok"` / `"skip:<原因>"` / `"fail:<原因>"`：
+        跳过（私聊、无人格、没配模板）不算失败，别把日志刷成一片红。
+        """
+        try:
+            inst = inst_of_umo(umo)
+            template = str(self._cfg("group_card_template", "", inst=inst) or "").strip()
+            if not template:
+                return "skip:未配置 group_card_template"
+            if "GroupMessage" not in umo or doc is None:
+                return "skip:非群聊/无人格"
+            group_id = umo.rsplit(":", 1)[-1]
+            bot = bot or self._platform_client(inst)
+            if bot is None:
+                return f"fail:找不到实例 {inst} 的平台客户端"
+            if not (hasattr(bot, "set_group_card") or hasattr(bot, "call_action")):
+                return f"fail:客户端 {type(bot).__name__} 没有发名片接口"
+            # 机器人自己的 QQ：优先问 OneBot（get_login_info），
+            # 有些封装把 `self_id` 暴露成 partial/属性对象，不能直接 int()。
+            uid = ""
+            if hasattr(bot, "call_action"):
+                try:
+                    info = await bot.call_action("get_login_info")
+                    uid = str((info or {}).get("user_id") or "")
+                except Exception:
+                    uid = ""
+            if not uid:
+                sid = getattr(bot, "self_id", "")
+                uid = str(sid) if isinstance(sid, (int, str)) else ""
+            if not uid:
+                return "fail:拿不到机器人自身 QQ"
+            card = template.replace("{name}", doc.display_name)
+            if hasattr(bot, "set_group_card"):
+                await bot.set_group_card(group_id=int(group_id),
+                                         user_id=int(uid), card=card)
+            else:
+                await bot.call_action("set_group_card", group_id=int(group_id),
+                                      user_id=int(uid), card=card)
+            logger.info(f"[chatcore_neo] 群名片已设为 {card}（{umo}）")
+            return "ok"
+        except Exception as e:
+            s = str(e)
+            low = s.lower()
+            # 机器人已经不在那个群 / 群成员里找不到它 —— 属于"不用修"，
+            # 否则每次启动都会重试三遍并刷一片红。
+            if ("成员" in s and "不存在" in s) or "not found" in low \
+                    or "retcode=1200" in low or "retcode='1200'" in low:
+                return "skip:机器人不在该群"
+            return f"fail:{e!r}"
+
+    async def sync_group_cards(self, group: str = "",
+                               umos: list[str] | None = None) -> dict:
+        """批量把会话的群名片对齐到当前人格。
+
+        `group` 给定 → 只修该组成员；`umos` 给定 → 只修这些；
+        都不给 → 修**所有已入组**的会话（用于修复历史错配）。
+        """
+        if umos is None:
+            if group:
+                targets = self.groups.members(group)
+            else:
+                targets = [u for m in self.groups.all_groups().values()
+                           for u in (m.get("members") or [])]
+        else:
+            targets = [str(u) for u in umos if str(u).strip()]
+        if not str(self._cfg("group_card_template", "", inst=self._default_inst) or "").strip():
+            return {"total": 0, "ok": 0, "failed": 0, "skipped": 0,
+                    "note": "未配置 group_card_template，跳过"}
+        ok = fail = skip = 0
+        details = []
+        fail_list: list[str] = []
+        reasons: dict[str, int] = {}
+        for umo in targets:
+            doc = self._persona_for(umo)
+            if doc is None:
+                skip += 1
+                reasons["无人格"] = reasons.get("无人格", 0) + 1
+                continue
+            st = await self._set_group_card(umo, doc)
+            if st == "ok":
+                ok += 1
+                details.append({"umo": umo, "card": doc.display_name})
+            elif st.startswith("skip:"):
+                skip += 1
+                k = st[5:]
+                reasons[k] = reasons.get(k, 0) + 1
+            else:
+                fail += 1
+                fail_list.append(umo)
+                k = st[5:] if st.startswith("fail:") else st
+                reasons[k] = reasons.get(k, 0) + 1
+        return {"total": len(targets), "ok": ok, "failed": fail,
+                "skipped": skip, "reasons": reasons,
+                "fail_umos": fail_list[:10],
+                "details": details[:50]}
+
+    def apply_group_to_session(self, umo: str) -> None:
+        """把会话加入组之后立刻对齐：人格 + 副人格 + 群名片 + 切换提醒。
+
+        与 `/persona` 命令走同一条应用链（`_apply_persona_switch` 缺事件时
+        的等价实现），否则会出现"人格换了、群名片还是旧的"。
+        """
+        try:
+            if not self.groups.in_group(umo):
+                return
+            gname = self.groups.group_of(umo)
+            pid = self.groups.persona_of(gname)
+            doc = self.personas.get(pid) if pid else None
+            if doc is not None:
+                cur = self._persona_for(umo)
+                self._session_persona.set(umo, doc.id)
+                if cur is None or cur.id != doc.id:
+                    self._persona_switch_notice[umo] = (
+                        f"人格已切换：你现在扮演的是「{doc.display_name}」"
+                        f"（id: {doc.id}），不再是「{cur.display_name if cur else '之前的角色'}」。"
+                        "从现在起请彻底以新角色的身份、口吻、称呼体系回应，"
+                        "不要再用旧角色的自称或人名。"
+                    )
+                    self._spawn(self._set_group_card(umo, doc))
+            self.costars.set(umo, self.groups.costars_of(gname))
+        except Exception as e:
+            logger.warning(f"[chatcore_neo] 应用人格组失败: {e!r}")
+
     def _costar_docs(self, umo: str,
                      main_doc: PersonaDoc | None) -> list[PersonaDoc]:
         """当前会话的副人格文档；解析失败 / 重复 / 未授权给本实例的自动忽略。"""
         out: list[PersonaDoc] = []
-        for pid in self.costars.cast_of(umo):
+        for pid in self._costars_for(umo):
             if main_doc is not None and pid == main_doc.id:
                 continue
             d = self.personas.get(pid)
@@ -714,7 +961,7 @@ class ChatCoreNeoPlugin(Star):
         if action == "list":
             return self._costar_view(umo, doc, mode_ok=mode_ok, cap=cap)
         if action == "clear":
-            had = self.costars.clear(umo)
+            had = self._set_costars(umo, [])
             if not had:
                 return "当前会话没有开启多人格同台。"
             return "已关闭多人格同台。\n" + "\n".join(
@@ -754,11 +1001,11 @@ class ChatCoreNeoPlugin(Star):
                 else:
                     new.append(pid)
                     head.append(f"「{self._pname(pid)}」已加入会话")
-            self.costars.set(umo, new)
+            self._set_costars(umo, new)
             lines = head + lines
         elif action == "rm":
             removed = [p for p in cur if p in set(ids)]
-            self.costars.set(umo, [p for p in cur if p not in set(ids)])
+            self._set_costars(umo, [p for p in cur if p not in set(ids)])
             lines = [f"「{self._pname(p)}」已离开会话" for p in removed] + lines
             if not removed:
                 lines.insert(0, "这些角色本就不在会话中。")
@@ -768,7 +1015,7 @@ class ChatCoreNeoPlugin(Star):
             old = set(cur)
             added = [p for p in keep if p not in old]
             removed = [p for p in cur if p not in set(keep)]
-            self.costars.set(umo, keep)
+            self._set_costars(umo, keep)
             lines = ([f"「{self._pname(p)}」已加入会话" for p in added]
                      + [f"「{self._pname(p)}」已离开会话" for p in removed]
                      + lines)
@@ -899,6 +1146,15 @@ class ChatCoreNeoPlugin(Star):
                 return False
             return pool is None or not inst or pool.is_available(inst, pid)
 
+        gname = ""
+        try:
+            if self.groups.in_group(umo):
+                gname = self.groups.group_of(umo)
+                gpid = self.groups.persona_of(gname)
+                if _ok(gpid):
+                    return self.personas.get(gpid)
+        except Exception:
+            gname = ""
         sid = self._session_persona.get(umo)
         if _ok(sid):
             return self.personas.get(sid)
@@ -944,8 +1200,8 @@ class ChatCoreNeoPlugin(Star):
         try:
             uid = str(event.get_sender_id() or "").strip()
             name = str(event.get_sender_name() or "").strip()
-            # 平台偶尔把 QQ 号当昵称返回（`10003` → `"10003"`）。
-            # 那不是昵称，存下来只会让页面上出现「10003（10003）」。
+            # 平台偶尔把 QQ 号当昵称返回（`10004` → `"10004"`）。
+            # 那不是昵称，存下来只会让页面上出现「10004（10004）」。
             if name == uid:
                 name = ""
             if uid and name and self._user_names.get(uid) != name:
@@ -1258,7 +1514,7 @@ class ChatCoreNeoPlugin(Star):
                 # `is_at_or_wake_command` 置真，所以不排除就会在群里被下面第 ③ 条拦掉。
                 #
                 # 线上实录（戳一戳 llm 模式，群里）：
-                #   戳一戳已重入管道 umo='...:GroupMessage:10005' 成功=True
+                #   戳一戳已重入管道 umo='...:GroupMessage:10003' 成功=True
                 #   闸门拦截：唤醒前缀唤醒，未 @/引用机器人　文本='（对方戳了你一下）'
                 # 私聊因为第 ① 条早就放行了，所以**只在群里复现**。
                 return
@@ -1559,6 +1815,12 @@ class ChatCoreNeoPlugin(Star):
             if result.dynamic_text:
                 self._append_dynamic(req, result.dynamic_text)
 
+            # 人格组·跨会话近况：这个人在**同组其他会话**里最近说过什么
+            _gr = self._group_recent_block(umo, uid)
+            if _gr:
+                self._append_dynamic(req, _gr)
+                self._stats["injected"] += 1
+
             # 图片转述：框架在 build_main_agent 阶段就把 `<image_caption>` 注入了
             # `extra_user_content_parts`，但它自己只打 DEBUG，日志里看不见结果。
             # 这里把转述原文捞出来打 INFO，用于确认转述是否真的生效。
@@ -1623,6 +1885,52 @@ class ChatCoreNeoPlugin(Star):
                 c = ctx.get("content")
                 n += len(c.encode("utf-8")) if isinstance(c, str) else 0
         return n
+
+    def _short_label(self, umo: str) -> str:
+        try:
+            if "GroupMessage" in umo:
+                n = self._group_names.get(umo)
+                return str(n) if n else ("群" + umo.rsplit(":", 1)[-1])
+            return "私聊"
+        except Exception:
+            return "会话"
+
+    def _group_recent_block(self, umo: str, uid: str) -> str:
+        """同组 + 同用户 + **其他会话** + 窗口内最近几轮的原文。
+
+        需求：甲在会话 a 说了一堆，然后到会话 b 说话时，b 的提示词里要能看到
+        甲在 a 最近的 5 条（含 bot 当时怎么回的），且只算 1 小时内的。
+        """
+        try:
+            if not bool(self._cfg("group_recent_enabled", True)):
+                return ""
+            if not self.groups.in_group(umo):
+                return ""
+            gname = self.groups.group_of(umo)
+            win_min = int(self._num(self._cfg("group_recent_window_min"), 60) or 60)
+            lim = int(self._num(self._cfg("group_recent_limit"), 5) or 5)
+            hits = self.group_journal.recent(
+                gname, uid, exclude_umo=umo, window_sec=win_min * 60, limit=lim)
+            if not hits:
+                return ""
+            cap = int(self._num(self._cfg("group_recent_max_chars"), 800) or 800)
+            lines = [f"【同组近况｜其他会话】这个人最近在别处跟你说过"
+                     f"（{win_min} 分钟内，最多 {lim} 条，按时间正序）："]
+            for e in hits:
+                ts = time.strftime("%H:%M", time.localtime(e["t"]))
+                q = (e.get("q") or "").strip().replace("\n", " ")[:160]
+                a = (e.get("a") or "").strip().replace("\n", " ")[:240]
+                lines.append(f"· [{ts}]（{self._short_label(e['u'])}）")
+                if q:
+                    lines.append(f"  他：{q}")
+                if a:
+                    lines.append(f"  你：{a}")
+            text = "\n".join(lines)
+            logger.debug(f"[chatcore_neo] 组内近况注入 {len(hits)} 条（{gname}）")
+            return text[:cap]
+        except Exception as e:
+            logger.debug(f"[chatcore_neo] 组内近况组装失败: {e!r}")
+            return ""
 
     @staticmethod
     def _append_dynamic(req: ProviderRequest, text: str) -> None:
@@ -1832,6 +2140,12 @@ class ChatCoreNeoPlugin(Star):
             key = self.groups.group_of(umo)
             self.memory.note_turn(key, user_msg, reply, persona=pid, uid=uid,
                                   user_name=user_name)
+            # 人格组：把这一轮记进跨会话近况（供组内**其他会话**下一轮参考）
+            try:
+                if self.groups.in_group(umo):
+                    self.group_journal.add(key, umo, uid, user_msg, reply)
+            except Exception as e:
+                logger.debug(f"[chatcore_neo] 组内近况写入失败: {e!r}")
             # 攒够一个窗口才固化：固化会调 LLM 总结 + 抽取图谱 + 给条目补向量，
             # 不能每轮都做；按人格计数，避免把切换前他人格的对话混进本轮记忆
             if self.memory.should_consolidate(key, persona=pid):
@@ -1922,7 +2236,7 @@ class ChatCoreNeoPlugin(Star):
             ("_live", lambda: self._live.pop(umo, None)),
             ("merge", lambda: self.merge.cancel(umo)),
             ("attention", lambda: self.attention.reset(umo)),
-            ("costars", lambda: self.costars.clear(umo)),
+            ("costars", lambda: self._set_costars(umo, [])),
             ("memory._pending", lambda: self.memory.drop_pending(
                 self.groups.group_of(umo))),
         ):
@@ -2030,8 +2344,8 @@ class ChatCoreNeoPlugin(Star):
                 pids.append(d.id)
         overflow = pids[cap:] if cap else []
         pids = pids[:cap] if cap else pids
-        prev = self.costars.cast_of(umo)
-        self.costars.set(umo, pids)
+        prev = self._costars_for(umo)
+        self._set_costars(umo, pids)
         old = set(prev)
         new = set(pids)
         msgs = [f"「{self._pname(p)}」已加入会话" for p in pids if p not in old]
@@ -2370,12 +2684,23 @@ class ChatCoreNeoPlugin(Star):
         self._session_persona.set(umo, doc.id)
         self._maybe_set_group_card(event, doc)
         _old_name = old.display_name if old else "之前的角色"
-        self._persona_switch_notice[umo] = (
+        notice = (
             f"人格已切换：你现在扮演的是「{doc.display_name}」"
             f"（id: {doc.id}），不再是「{_old_name}」。"
             "从现在起请彻底以新角色的身份、口吻、称呼体系回应，"
             "不要再用旧角色的自称或人名。"
         )
+        self._persona_switch_notice[umo] = notice
+        # 人格组：组内任一会话切换，全组跟着换
+        try:
+            if self.groups.in_group(umo):
+                gname = self.groups.group_of(umo)
+                self.groups.set_persona(gname, doc.id)
+                for u in self.groups.members(gname):
+                    self._session_persona.set(u, doc.id)
+                    self._persona_switch_notice[u] = notice
+        except Exception as e:
+            logger.warning(f"[chatcore_neo] 同步人格组失败: {e!r}")
         return old
 
     async def _reenter_after_persona_switch(self, event: AstrMessageEvent, umo: str,
@@ -3370,6 +3695,8 @@ class ChatCoreNeoPlugin(Star):
         t0 = time.time()
         acc = {"cut": 0, "sent": 0, "chars": 0, "first": "", "warned": False}
         err = ""
+        # 模型原始输出（分片累积，仅用于收尾时落一条完整日志）
+        parts: list[str] = []
 
         async def _emit(segs) -> None:
             for raw in segs:
@@ -3405,6 +3732,7 @@ class ChatCoreNeoPlugin(Star):
                 for comp in comps:
                     text = getattr(comp, "text", None)
                     if isinstance(comp, Plain) and isinstance(text, str):
+                        parts.append(text)
                         await _emit(sp.feed(text))
                     else:
                         # 非文本组件（图片/语音/转发…）：先把攒的文字发掉，
@@ -3452,6 +3780,15 @@ class ChatCoreNeoPlugin(Star):
                 f"残留={len(sp.leftover())}字"
                 + (f" 首段={acc['first']!r}" if acc["first"] else "")
                 + (f" 错误={err}" if err else ""))
+            # 完整正文单独落一条，方便事后回看整轮到底说了什么
+            try:
+                full = "".join(parts).strip()
+                if full:
+                    logger.info(
+                        f"[chatcore_neo] 完整回复 umo={ctx['umo']!r} "
+                        f"{len(full)}字:\n{full}")
+            except Exception:
+                pass
 
     async def _stream_emit(self, event: AstrMessageEvent, raw: str,
                            ctx: dict) -> tuple:
@@ -4127,18 +4464,24 @@ class ChatCoreNeoPlugin(Star):
         if sub == "groups":
             if len(args) >= 2 and args[1] == "set" and len(args) >= 4:
                 self.groups.assign(args[2], args[3])
-                yield event.plain_result(f"已把 {args[2]} 归入组 {args[3]}")
+                self.apply_group_to_session(args[2])
+                yield event.plain_result(
+                    f"已把 {args[2]} 归入人格组 {args[3]}（人格/副人格已对齐）")
                 return
             if len(args) >= 2 and args[1] == "rm" and len(args) >= 3:
                 self.groups.remove(args[2])
-                yield event.plain_result(f"已把 {args[2]} 移出记忆组")
+                yield event.plain_result(f"已把 {args[2]} 移出人格组")
                 return
             g = self.groups.all_groups()
             st = self.groups.stats()
-            lines = [f"🧩 跨会话记忆组（{st['groups']} 组 / {st['members']} 会话）"]
-            for name, umos in g.items():
-                lines.append(f"  · {name}")
-                for u in umos:
+            lines = [f"🧩 人格组（{st['groups']} 组 / {st['members']} 会话）"]
+            for name, meta in g.items():
+                pid = meta.get("persona") or "（未设人格）"
+                cs = meta.get("costars") or []
+                lines.append(f"  · {name}　[{meta.get('instance') or '-'}] "
+                             f"人格={pid}"
+                             + (f" 副人格={','.join(cs)}" if cs else ""))
+                for u in meta.get("members") or []:
                     lines.append(f"      {u}")
             lines.append(f"\n当前会话归组：{self.groups.group_of(umo)}")
             lines.append("用法：/persona groups set <umo> <组名> ｜ "
@@ -4302,6 +4645,7 @@ class ChatCoreNeoPlugin(Star):
             logger.warning(f"[chatcore_neo] 卸载时停止主动消息调度失败: {e!r}")
         jobs = [
             ("记忆缓存", lambda: self.memory.flush()),
+            ("组内近况", lambda: self.group_journal.flush()),
             ("事件模板", lambda: self.templates.save()),
             ("会话人格表", lambda: self.state.session_persona.save()),
             ("初始化标记", lambda: self.state.session_initialized.save()),
