@@ -798,9 +798,7 @@
         "description": "判定：豁免用户",
         "type": "list",
         "hint": "名单内用户的消息不判定，直接回复（留空 = 无豁免）。",
-        "default": [
-            "10001"
-        ],
+        "default": [],
         "condition": {
             "enable_no_reply_judge": true
         }
