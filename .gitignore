@@ -6,12 +6,12 @@ __pycache__/
 .venv/
 venv/
 
-# 运行时数据（绝不入库）
-data/
-state/
-memory/
-instances/
-logs/
+# 运行时数据（只忽略仓库根目录下的这些目录，别误伤 core/state、core/memory）
+/data/
+/state/
+/memory/
+/instances/
+/logs/
 *.log
 *.db
 *.db-wal
