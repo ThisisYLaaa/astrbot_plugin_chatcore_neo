@@ -386,7 +386,10 @@ python -m pytest tests -q
 - **插件目录自身**：`tests/` 在插件里，所有路径从 `Path(__file__)` 推导
 - **AstrBot 框架**（`backend/app`，用来 import `astrbot.*`）：从插件位置向上找，找不到就
   逐个盘符探常见安装位置；也可以用环境变量直接指定
-- **真实安装的那份插件数据**（人格库、配置、实例目录）：同上，找不到时相关用例自动 skip
+- **真实安装的那份插件数据**（人格库、配置、实例目录）：同上。找不到时**大多数**用例会
+  自己 skip，但**少数用例没有 skip 分支**（它们直接 `personas.all()[0]` 之类），会以
+  `IndexError` / `AssertionError` 的形式失败 —— 裸克隆（没有 `plugin_data/chatcore_neo`）
+  大约 46 条，属于缺数据，不是代码问题
 
 ```bash
 # 装在非典型位置 / CI 里只有仓库时，用环境变量指路
@@ -395,8 +398,9 @@ export ASTRBOT_DATA=/path/to/AstrBot/data
 export ASTRBOT_LEGACY_DATA=/path/to/legacy/env/data   # 只有"和旧环境对比"的用例需要
 ```
 
-> 结论口径：**失败 = 真问题**，`skip = 这台机器缺环境`（例如没装框架、没有人格数据）。
-> 想只看环境性跳过，`python tests/run_tests.py -v` 会逐条列出 skip 原因。
+> 结论口径：**跑在真实安装上（带人格库）时应当全绿**；只有环境性 skip。
+> 想在脱离安装的裸克隆里跑，先接受上面那批"缺数据失败"。
+> 逐条 skip 原因：`python tests/run_tests.py -v`。
 
 ### 离线记忆评测
 
