@@ -14,7 +14,7 @@
       "version": 2,
       "groups": {
         "组名": {
-          "persona": "persona_a",
+          "persona": "sr_robin_qingge",
           "costars": ["strinova_kanami"],
           "members": ["BotA:GroupMessage:123", "BotA:FriendMessage:456"],
           "instance": "BotA",
@@ -157,6 +157,17 @@ class MemoryGroups:
                     "path": str(self.path)}
 
     # ------------------------------------------------------------ 校验
+    def _instance_of_meta(self, meta: dict) -> str:
+        """组的实例：优先声明值，没声明时从成员 UMO 前缀推。"""
+        inst = str((meta or {}).get("instance") or "").strip()
+        if inst:
+            return inst
+        for u in (meta or {}).get("members") or []:
+            head = self.inst_of(u)
+            if head:
+                return head
+        return ""
+
     def _assert_group_instance(self, group: str, inst: str) -> None:
         cur = str((self._groups.get(group) or {}).get("instance") or "")
         if cur and inst and cur != inst:
@@ -201,12 +212,30 @@ class MemoryGroups:
                 return new
             if new in self._groups:                 # 合并
                 tgt = self._groups[new]
-                src = self._groups.pop(old)
+                src = self._groups[old]
+                # 合并前校验实例：跨实例把两组并到一起，会让 A 实例的组人格/
+                # 副人格落到 B 实例的会话上（`apply_group_to_session` 按组直接
+                # 下发，不走 PersonaPool 授权）。本文件的不变式是「一组一实例、
+                # 跨实例直接拒绝」，`assign` 有守门、这里以前漏了。
+                # 实例取「声明值」，没声明时从成员 UMO 前缀推（与 inst_of 同源）。
+                si = self._instance_of_meta(src)
+                ti = self._instance_of_meta(tgt)
+                if si and ti and si != ti:
+                    raise ValueError(
+                        f"人格组「{old}」属于实例 {si}，不能并入实例 {ti} 的组"
+                        f"「{new}」（实例拆分后不支持跨实例共享记忆）")
+                self._groups.pop(old)
                 for u in src.get("members") or []:
                     if u not in tgt["members"]:
                         tgt["members"].append(u)
                 if src.get("persona") and not tgt.get("persona"):
                     tgt["persona"] = src["persona"]
+                # 副人格也要并：只并 persona 会把源组的副人格静默丢掉。
+                for c in src.get("costars") or []:
+                    if c not in tgt["costars"]:
+                        tgt["costars"].append(c)
+                if si and not ti:
+                    tgt["instance"] = si
                 tgt["updated_at"] = _now()
             else:
                 self._groups[new] = self._groups.pop(old)

@@ -204,6 +204,7 @@ class PromptAssembler:
                 tier=inp.tier, cfg=inp.cfg,
                 unrestricted=inp.unrestricted,
                 nsfw_enabled=inp.nsfw_enabled,
+                msg_mode=inp.msg_mode,
                 proactive=inp.proactive), "state")
 
         # 5 用户印象

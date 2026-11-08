@@ -5,7 +5,7 @@
 声明「哪些人格在本实例可用」：
 
     instances/<实例 id>/personas.json
-    {"version": 1, "grants": ["persona_a", "persona_b"]}
+    {"version": 1, "grants": ["sr_robin_qingge", "diy_sui"]}
 
 * 授权是**多对多**：同一个人格可以同时给多个实例。
 * 文件不存在 = 该实例**没有任何**可用人格（新实例的默认状态），
@@ -100,14 +100,26 @@ class PersonaPool:
 
     # ------------------------------------------------------------ 查询
     def available_ids(self, inst: str) -> set[str]:
+        """该实例被**显式授权**的人格 id。
+
+        注意：空集合在下面两个判定里表示「不做限制」，见 `is_available`。
+        """
         return set(self.grants(inst))
 
     def available_docs(self, inst: str, docs: Iterable[Any]) -> list[Any]:
         ids = self.available_ids(inst)
+        if not ids:
+            # 空授权表 = 不限制：新接进来的实例还没配授权时，
+            # 不能让它一个人格都不可用（否则 /persona list 全空、
+            # 组人格全部回退，表现为"这个实例的人设全是错的"）。
+            return list(docs)
         return [d for d in docs if getattr(d, "id", "") in ids]
 
     def is_available(self, inst: str, pid: str) -> bool:
-        return str(pid) in self.available_ids(inst)
+        ids = self.available_ids(inst)
+        if not ids:
+            return True
+        return str(pid) in ids
 
     def resolve_default(self, inst: str, docs: Iterable[Any],
                         wanted: str = "") -> Any:
@@ -133,8 +145,13 @@ class PersonaPool:
         return [i for i in instances if pid in self.available_ids(i)]
 
     def matrix(self, docs: Iterable[Any], instances: Iterable[dict]) -> dict:
-        """给 WebUI 拖拽页的完整数据。"""
+        """给 WebUI 拖拽页的完整数据。
+
+        `unrestricted=True` 表示该实例**没有授权表**（= 不限制，全部可用）——
+        页面上必须显式提示，否则空勾选会让人误以为"一个人格都没授权"。
+        """
         docs = list(docs)
+        all_ids = {d.id for d in docs}
         inst_rows = []
         for meta in instances:
             iid = meta["id"]
@@ -144,7 +161,10 @@ class PersonaPool:
                 "enabled": bool(meta.get("enabled", True)),
                 "type": meta.get("type", ""),
                 "grants": grants,
-                "unknown": [g for g in grants if g not in {d.id for d in docs}],
+                "unrestricted": not grants,
+                "available": len(all_ids) if not grants else len(
+                    [g for g in grants if g in all_ids]),
+                "unknown": [g for g in grants if g not in all_ids],
             })
         personas = []
         for d in docs:
@@ -155,6 +175,9 @@ class PersonaPool:
                 "world": getattr(d, "world", ""),
                 "aliases": list(getattr(d, "aliases", []) or []),
                 "granted": [r["id"] for r in inst_rows if d.id in r["grants"]],
+                # 显式授权的实例 + 未配置授权表的实例（后者等于全部可用）
+                "effective": [r["id"] for r in inst_rows
+                              if r["unrestricted"] or d.id in r["grants"]],
             })
         personas.sort(key=lambda x: (x["world"] or "~", x["display_name"]))
         return {"instances": inst_rows, "personas": personas,

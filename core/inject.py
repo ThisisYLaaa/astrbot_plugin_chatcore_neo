@@ -217,6 +217,7 @@ def build_inject_text(
     rng: random.Random | None = None,
     nsfw_enabled: bool | None = None,
     proactive: bool = False,
+    msg_mode: int = 0,
 ) -> str:
     """生成每轮的动态注入文本。`state` 为 MemberState。
 
@@ -240,6 +241,9 @@ def build_inject_text(
     log = list(getattr(state, "conversation_log", []) or [])
     dup_count = count_duplicate_in_log(log, user_msg)
     minutes = minutes_since_last(log)
+    # 剧情向（MODE_NARRATIVE=1）是"当面说话"，不能用"消息/发/聊天"这类联网措辞
+    # （2026-10-27 回归：群聊剧情向里模型仍以为自己在拿手机刷群）。
+    narrative = int(msg_mode or 0) == 1
 
     # 结巴：一次性（SKILL.md 的「结巴触发条件」等这个提示）
     stutter = False
@@ -288,10 +292,17 @@ def build_inject_text(
         dup_line = ""
         time_line = "对方有阵子没说话了，由你来起个话头。\n"
     else:
-        dup_line = (f"ta刚发的消息跟之前一样，今天已经第{dup_count}次了。\n"
-                    if dup_count > 1 else "")
-        time_line = (f"上条消息在{minutes}发的。\n" if minutes != "刚刚"
-                     else "ta刚发完上一条。\n")
+        dup_line = (
+            (f"ta又把刚才那句说了一遍，今天已经第{dup_count}次了。\n"
+             if narrative else
+             f"ta刚发的消息跟之前一样，今天已经第{dup_count}次了。\n")
+            if dup_count > 1 else "")
+        if narrative:
+            time_line = (f"上一句是{minutes}前说的。\n" if minutes != "刚刚"
+                         else "ta刚说完上一句。\n")
+        else:
+            time_line = (f"上条消息在{minutes}发的。\n" if minutes != "刚刚"
+                         else "ta刚发完上一条。\n")
 
     ctx_line = ""
     if bool(cfg_get("inject_conversation_context", False)):
@@ -313,7 +324,7 @@ def build_inject_text(
         f"现在是{period}了。{display_name}心情{em_label}{dep_suffix}{period_mod}。"
         f"{lewd_feel}。"
         f"{stutter_line}"
-        f"你在跟{user_id}聊天。{priv_line}{aff_line}"
+        f"你在跟{user_id}{'说话' if narrative else '聊天'}。{priv_line}{aff_line}"
         f"{dup_line}"
         f"{time_line}"
         f"{restriction}"

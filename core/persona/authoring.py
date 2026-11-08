@@ -19,7 +19,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..paths import PERSONAS_DIR, SKILLS_DIR, TEMPLATE_DIR, WORLDS_DIR
+from ..paths import (PERSONAS_DIR, SKILLS_DIR, TEMPLATE_DIR, WORLDS_DIR,
+                     world_dir_name)
 from .model import PersonaDoc
 from .outline import parse_outline, split_frontmatter
 from .registry import FRAMEWORK_NOTICE, resolve_title
@@ -143,7 +144,9 @@ def new_persona(persona_id: str, *, display_name: str = "",
     if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", pid):
         return WriteResult(False, message="id 只能含字母/数字/下划线/连字符，长度 1-64")
 
-    pdir = root / pid
+    # 落盘位置：personas/<World>/<id>/ —— 目录名用世界观的英文全名，id 仍是
+    # 带 world 前缀的稳定外键（groups.json / state 都按 id 引用，不能改）。
+    pdir = root / world_dir_name(world) / pid
     yml = pdir / "persona.yaml"
     if yml.exists() and not force:
         return WriteResult(False, path=yml,

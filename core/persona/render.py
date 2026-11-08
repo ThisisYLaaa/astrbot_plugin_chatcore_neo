@@ -29,7 +29,7 @@ from .model import PersonaDoc
 #     剧情向时不必用「本提示优先于…」去豁免"禁用括号"，从根上消除冲突。
 #   (私, 1 剧情向) = 面对面 + 当面相处风格 + 通用底线 + 括号规范
 #   (私, 2 纯信息) = 隔屏   + 聊天风格     + 通用底线 + 不换行/禁括号
-#   (群, 1 剧情向) = QQ群(剧情向) + 聊天风格 + 通用底线 + 允许括号
+#   (群, 1 剧情向) = 多人在场 + 当面相处风格 + 通用底线 + 允许括号
 #   (群, 2 纯信息) = QQ群(日常)   + 聊天风格 + 通用底线 + 不换行/禁括号
 _STYLE_TABLE: dict[tuple[bool, int], tuple[str, ...]] = {
     (True, 1): ("core.md", "style_narrative.md", "style_common.md",
@@ -38,7 +38,7 @@ _STYLE_TABLE: dict[tuple[bool, int], tuple[str, ...]] = {
     (True, 2): ("core.md", "style.md", "style_common.md",
                 "understand.md", "scene/private_phone.md",
                 "format/common.md", "format/plain.md", "state/common.md"),
-    (False, 1): ("core.md", "style.md", "style_common.md",
+    (False, 1): ("core.md", "style_narrative.md", "style_common.md",
                  "understand.md", "scene/group_narrative.md",
                  "format/common.md", "format/narrative_group.md",
                  "state/common.md"),
@@ -170,7 +170,8 @@ WORLD_HINT = (
 # 人格正文里"把场景写死"的样板句标记。旧模板统一是
 # 「你现在正在QQ群聊中和群友聊天，你是一个普通的群友。」——
 # 场景该由框架按会话（群聊/私聊·面对面/私聊·隔屏）决定，人格里不该写死。
-_SCENE_HARDCODE_MARKERS = ("QQ群聊", "QQ 群聊", "正在QQ群", "群聊中和群友")
+_SCENE_HARDCODE_MARKERS = ("QQ群聊", "QQ 群聊", "正在QQ群", "群聊中和群友",
+                           "qq消息", "QQ消息", "刷QQ")
 
 
 def strip_stale_boilerplate(text: str) -> str:

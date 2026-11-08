@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""人格文档模型 —— `personas/<id>/persona.yaml` 的读写与校验。
+"""人格文档模型 —— `personas/<World>/<id>/persona.yaml` 的读写与校验。
 
 存储契约
 --------
+人格池按「游戏/世界观」分两层存放：`personas/<World>/<角色人格>/`，
+目录名去掉了 world 前缀（`sr_robin_qingge` → `Honkai_Star_Rail/robin_qingge`），
+而 `persona.yaml` 里的 `id` 仍是稳定的带前缀外键（groups.json / state / memory
+都按 id 引用）。`world_dir` 只作展示，不写回文件。
+
 `persona.yaml` **只放真正结构化的东西**：身份外键、别名、关系档位文件引用、
 注入策略覆盖、以及 lore 的抽取产物。
 
@@ -111,6 +116,7 @@ class PersonaDoc:
 
     # ---- 运行时派生（不写入 yaml）----
     dir: Path | None = None
+    world_dir: str = ""          # 所属「游戏/世界观」目录名（扁平布局为空）
     skill_body: str = ""
     outline: Outline | None = None
     loaded_errors: list[str] = field(default_factory=list)
@@ -139,6 +145,7 @@ class PersonaDoc:
             tiers=dict((raw.get("relationship") or {}).get("tiers") or {}),
             lore=LoreData.from_dict(raw.get("lore")),
             dir=persona_dir,
+            world_dir=world_dir_of(persona_dir),
         )
         doc.skill_frontmatter = dict((raw.get("skill") or {}).get("frontmatter") or {})
 
@@ -243,11 +250,44 @@ class PersonaDoc:
         return [t for _lvl, t in self.outline.titles()]
 
 
+# 人格池布局（2026-10-27 起）：`personas/<游戏·世界观>/<角色人格>/persona.yaml`
+# 旧的扁平布局 `personas/<id>/persona.yaml` 仍能读出来（迁移期 / 临时目录兼容）。
+SKIP_DIRS = {"__pycache__", ".git", "_archive", "_bak"}
+
+
+def _is_persona_dir(p: Path) -> bool:
+    return p.is_dir() and (p / "persona.yaml").exists()
+
+
 def iter_persona_dirs(personas_root: Path) -> list[Path]:
+    """扫人格目录：**两层优先，扁平兼容**。
+
+    第一层目录若自带 persona.yaml 就当作人格收下（旧布局），
+    否则视为「游戏/世界观」层，再往下收一层人格目录。
+    下划线/点开头的目录一律跳过，`_archive` 之类的暂存区不会被当成世界观。
+    """
     if not personas_root.exists():
         return []
-    return sorted(p for p in personas_root.iterdir()
-                  if p.is_dir() and (p / "persona.yaml").exists())
+    out: list[Path] = []
+    for p in sorted(personas_root.iterdir()):
+        if not p.is_dir() or p.name in SKIP_DIRS or p.name.startswith((".", "_")):
+            continue
+        if _is_persona_dir(p):
+            out.append(p)
+            continue
+        for sub in sorted(p.iterdir()):
+            if (sub.is_dir() and sub.name not in SKIP_DIRS
+                    and not sub.name.startswith((".", "_")) and _is_persona_dir(sub)):
+                out.append(sub)
+    return out
+
+
+def world_dir_of(persona_dir: Path) -> str:
+    """人格目录所属的「游戏/世界观」目录名；扁平布局返回空串。"""
+    parent = persona_dir.parent
+    if (parent / "persona.yaml").exists():
+        return ""
+    return parent.name
 
 
 def load_all(personas_root: Path) -> dict[str, PersonaDoc]:
@@ -264,5 +304,5 @@ def load_all(personas_root: Path) -> dict[str, PersonaDoc]:
 __all__ = [
     "PersonaDoc", "LoreData", "SCHEMA_VERSION", "KNOWN_TIERS",
     "TIER_LEGACY", "TIER_LABEL", "iter_persona_dirs", "load_all",
-    "split_frontmatter",
+    "split_frontmatter", "world_dir_of",
 ]

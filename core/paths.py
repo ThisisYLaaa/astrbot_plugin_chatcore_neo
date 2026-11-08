@@ -25,6 +25,38 @@ DATA_DIR: Path = PLUGINS_DIR.parent
 ROOT: Path = DATA_DIR / "plugin_data" / "chatcore_neo"
 
 PERSONAS_DIR: Path = ROOT / "personas"      # 人格池（**不在 skills/ 下，因而不进 AstrBot 技能索引**）
+
+# ---- 人格池按「游戏/世界观」分层：personas/<World>/<persona>/ ----
+# 目录名用**英文全名**（空格改下划线）方便人读；`world` 代码仍是内部外键
+# （persona.yaml 的 world 字段、skills/_worlds/<code>/），两者靠这张表对齐。
+# 新增世界观：先在 skills/_worlds/<code>/ 建目录，再在这里登记目录名。
+WORLD_DIR_NAMES: dict[str, str] = {
+    "sr": "Honkai_Star_Rail",
+    "zzz": "Zenless_Zone_Zero",
+    "gi": "Genshin_Impact",
+    "arke": "Arknights_Endfield",
+    "nte": "Neverness_to_Everness",
+    "strinova": "Strinova",
+    "diy": "DIY",              # world 为空的自制人格（半言 / 模型拟人）
+}
+DEFAULT_WORLD_DIR = "DIY"      # world 为空时落这个目录
+
+
+def world_dir_name(world: str) -> str:
+    """world 代码 → 人格池下的目录名（英文全名）。未登记的代码原样当目录名。"""
+    w = (world or "").strip()
+    if not w:
+        return DEFAULT_WORLD_DIR
+    return WORLD_DIR_NAMES.get(w, w)
+
+
+def world_for_dir(dir_name: str) -> str:
+    """目录名 → world 代码（反查；不是已知目录名则返回原串）。"""
+    low = (dir_name or "").strip().lower()
+    for code, name in WORLD_DIR_NAMES.items():
+        if name.lower() == low:
+            return code
+    return (dir_name or "").strip()
 STATE_DIR: Path = ROOT / "state"            # 状态数据（umo 键，跨实例共享）
 MEMORY_DIR: Path = ROOT / "memory"          # 旧版单库（迁移后仅作备份，不再写入）
 PROACTIVE_DIR: Path = ROOT / "proactive"    # 旧版单目录（同上）

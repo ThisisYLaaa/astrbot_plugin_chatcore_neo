@@ -200,12 +200,24 @@ class Privilege:
     """
 
     def __init__(self, uid_of: Any = None, uid: str = "") -> None:
+        # 旧写法 `Privilege(["100000001"])` 在新语义下会**静默失效**：列表不可
+        # 调用 → `_uid_of=None` → 谁也拿不到特权。实测把一个测试模块的相关断言
+        # 整片变成空转（测试全绿但什么都没验）。这里直接报错，让写错的地方
+        # 当场暴露；`Privilege("100000001")` 这种位置传固定 uid 仍兼容。
+        if uid_of is not None and not callable(uid_of):
+            if isinstance(uid_of, str):
+                uid = uid or uid_of
+                uid_of = None
+            else:
+                raise TypeError(
+                    "Privilege 的 uid_of 必须是可调用对象，或用 uid=\"...\" "
+                    f"传固定 uid；收到 {type(uid_of).__name__}: {uid_of!r}")
         self._uid_of = uid_of if callable(uid_of) else None
         self._uid = str(uid or "").strip()
 
     @staticmethod
     def inst_of(scope: str) -> str:
-        """`BotA:GroupMessage:123` -> `BotA`。"""
+        """`Banyan:GroupMessage:123` -> `Banyan`。"""
         return str(scope or "").split(":", 1)[0]
 
     def uid_for(self, scope: str = "") -> str:

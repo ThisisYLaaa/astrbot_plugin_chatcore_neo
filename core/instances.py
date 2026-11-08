@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""实例化：每个平台适配器（BotA / BotB / …）一份独立配置与数据根。
+"""实例化：每个平台适配器（Banyan / Sui / …）一份独立配置与数据根。
 
 设计
 ----
@@ -13,7 +13,7 @@ AstrBot 的插件配置是**全局单文件**（`star_manager` 启动时读一�
         memory/          # memory.db + graph.db
         proactive/       # 主动消息调度状态
 
-实例 id = UMO 的第一段（`BotA:GroupMessage:123` -> `BotA`）。
+实例 id = UMO 的第一段（`Banyan:GroupMessage:123` -> `Banyan`）。
 
 本模块不 import 任何 chatcore 内部逻辑，只依赖 paths 与框架的 AstrBotConfig，
 方便单测。
@@ -40,7 +40,7 @@ MINIMAL_PRESET: dict[str, Any] = {
     "enable_attention": False,
     "enable_segmentation": False,
     "enable_markers": False,
-    "enable_proactive": False,
+    # 主动消息是独立功能（参数在「主动消息」页），不在实例预设里
     "enable_tts": False,
     "enable_streaming": False,
     "enable_no_reply_judge": False,
@@ -102,10 +102,33 @@ class InstanceStore:
             return []
         return sorted(p.parent.name for p in self.root.glob("*/config.json"))
 
+    def live_ids(self) -> list[str]:
+        """AstrBot 配置里**仍然存在**的实例 id（含被禁用的）。
+
+        用户删掉一个平台实例后，它就不在这里了 —— 但插件目录里还留着
+        `instances/<id>/`，那是"已移除实例"（见 `orphan_ids`）。
+        """
+        return sorted({str(m.get("id") or "") for m in self.discover()
+                       if m.get("id")})
+
+    def orphan_ids(self) -> list[str]:
+        """磁盘上有配置、但 AstrBot 已经不认识的实例（用户删掉了平台实例）。
+
+        `default` 要排除：它是插件自己的兜底实例目录（没有任何平台实例时
+        才用到），不是用户删掉的东西；把它列成"已移除实例"会误导用户去清理。
+        """
+        live = set(self.live_ids())
+        return [i for i in self.loaded_ids()
+                if i not in live and i != "default"]
+
+    def forget(self, inst: str) -> None:
+        """丢掉内存里的配置缓存（实例被归档/删除后调用）。"""
+        self._cfgs.pop(str(inst), None)
+
     def default_id(self) -> str:
         if self._default:
             return self._default
-        # 已有配置的实例优先（迁移后 BotA 一定在）
+        # 已有配置的实例优先（迁移后 Banyan 一定在）
         loaded = self.loaded_ids()
         if loaded:
             self._default = loaded[0]

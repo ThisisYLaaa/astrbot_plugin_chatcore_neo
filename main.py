@@ -44,7 +44,8 @@ from .core.output import (clean_segments, fix_literal_mentions,
                          normalize_speaker_segments, parse_markers,
                          split_narrative, split_raw,
                          strip_legacy_segment_marks, strip_markers)
-from .core.proactive import ProactiveScheduler, synthesize_event
+from .core.proactive import (ProactiveScheduler, load_settings as proactive_settings,
+                             synthesize_event)
 from .core.segment_agent import SegmentAgent
 from .core.session_params import MODE_NARRATIVE, MODE_PLAIN
 from .core.persona import PersonaService
@@ -69,7 +70,7 @@ _CUR_INST: ContextVar[str] = ContextVar("ccn_inst", default="")
 
 
 def inst_of_umo(umo: str) -> str:
-    """`BotA:GroupMessage:123` -> `BotA`。"""
+    """`Banyan:GroupMessage:123` -> `Banyan`。"""
     return str(umo or "").split(":", 1)[0]
 
 
@@ -148,6 +149,9 @@ def _int_or(value, default: int) -> int:
 X_UMO = "_ccn_umo"
 X_PERSONA = "_ccn_persona"
 X_UID = "_ccn_uid"
+# 记忆归属 id：私聊里 X_UID 是空串（状态按会话级存），但记忆/近况必须知道
+# "这是谁说的"，否则组内近况在私聊侧永远查不到（见 on_llm_request 注释）。
+X_MEM_UID = "_ccn_mem_uid"
 X_TIER = "_ccn_tier"
 X_USER_MSG = "_ccn_user_msg"
 X_INJECTED = "_ccn_injected"
@@ -168,6 +172,18 @@ X_STREAM_REQ = "_ccn_stream_req"
 X_STREAM_READY = "_ccn_stream_ready"
 X_STREAMED = "_ccn_streamed"
 X_STREAM_SENT = "_ccn_stream_sent"
+
+
+# 框架在「本轮被要求停止」时塞给用户的固定文案
+# （backend/app/astrbot/core/agent/runners/tool_loop_agent_runner.py:
+#  USER_INTERRUPTION_MESSAGE = "Output stopped."）。撤回取消把 agent 停掉后，
+# 框架把它当成"最终回复"交付 —— 用户看到的就是一句莫名其妙的英文。
+# 这类文本一律按"不是正文"处理：http 输出层与流式兜底各拦一次。
+INTERRUPTION_TEXTS = ("Output stopped.", "Stop output.")
+
+
+def _is_interruption_text(text: str) -> bool:
+    return (text or "").strip() in INTERRUPTION_TEXTS
 # 叫醒词（call_prefix）：消息以它开头时**只触发 LLM 回复，不触发指令**。
 # 三处用它：① 闸门见它就放行（它不是"未命中命令的唤醒消息"）
 #           ② 剥词后把 is_at_or_wake_command 置真，让消息走 LLM 链路
@@ -297,6 +313,11 @@ class ChatCoreNeoPlugin(Star):
         self._group_names = JsonMap(paths.STATE_DIR / "_group_names.json")
         self._seed_names_from_templates()
         self._import_legacy_names()
+        # 主动消息状态从「全局一份」拆成「每实例一份」（幂等，只跑一次）
+        try:
+            self._migrate_proactive_state()
+        except Exception as e:
+            logger.warning(f"[chatcore_neo] 主动消息状态迁移异常：{e!r}")
 
         self._stats = {"llm_request": 0, "injected": 0, "stripped": 0,
                        "state_updates": 0, "errors": 0}
@@ -359,18 +380,19 @@ class ChatCoreNeoPlugin(Star):
         for iid in list((getattr(self, "_inst_cfgs", {}) or {}).keys()) or [self._default_inst]:
             try:
                 rt = self._rt(iid)
-                rt.scheduler.start(self._emit_proactive)
-                if not rt.scheduler.enabled:
-                    logger.info(f"[chatcore_neo] {iid}: 主动消息全局开关关闭（未放行）")
-                elif not rt.scheduler.running:
+                # 把实例 id 绑进回调：同一条 emit 要写回**发起实例**的调度器状态，
+                # 并在合成事件期间切到该实例的上下文（人格/记忆组按会话 umo 走，
+                # 其余按实例隔离的配置才不会错用默认实例）。
+                rt.scheduler.start(
+                    lambda umo, _i=iid: self._emit_proactive(umo, inst=_i))
+                if not rt.scheduler.running:
                     logger.warning(f"[chatcore_neo] {iid}: 主动消息调度启动失败（无事件循环）")
                 else:
                     logger.info(f"[chatcore_neo] {iid}: 主动消息调度已启动")
             except Exception as e:
                 logger.warning(f"[chatcore_neo] {iid}: 主动消息调度启动异常：{e!r}")
-        # 全局开关（`enable_proactive`）只负责**放行**：它关着就不启动，会话级
-        # 配置一律不作数；它开着也只是"允许使用"，不会替任何会话开口
-        # ——谁开口由「分会话配置」的 opt-in 决定（见 proactive.should_emit）。
+        # 主动消息没有"实例级总开关"：每个实例一条循环，谁开口由
+        # 「主动消息 → 分会话配置」里该会话的 opt-in 决定（见 should_emit）。
 
         # 启动后把已入组会话的群名片对齐一次：
         # 历史上有"人格换了、群名片还是旧的"的会话，靠这条自愈。
@@ -464,11 +486,60 @@ class ChatCoreNeoPlugin(Star):
             table[i] = r
         return r
 
+    def _migrate_proactive_state(self) -> None:
+        """把旧版「全局一份 proactive/state.json」按实例拆开（一次性）。
+
+        旧实现里四个实例的调度器共用同一个 state.json：Banyan 里配的会话
+        覆盖会被 Sui/Cyrene 的调度器一起读到，页面之间还会互相矛盾。
+        现在每个实例一份，这里按 umo 前缀把旧条目分流，旧文件改名保留。
+        """
+        legacy = paths.PROACTIVE_DIR / "state.json"
+        try:
+            if not legacy.exists():
+                return
+            raw = json.loads(legacy.read_text(encoding="utf-8") or "{}")
+        except Exception as e:
+            logger.warning(f"[chatcore_neo] 主动消息旧状态读取失败，跳过迁移：{e!r}")
+            return
+        payloads: dict[str, dict] = {}
+        for key in ("sessions", "overrides"):
+            data = raw.get(key) if isinstance(raw, dict) else None
+            if not isinstance(data, dict):
+                continue
+            for umo, val in data.items():
+                inst = inst_of_umo(str(umo))
+                if not inst:
+                    continue
+                slot = payloads.setdefault(
+                    inst, {"version": 1, "sessions": {}, "overrides": {}})
+                slot[key][str(umo)] = val
+        written = 0
+        for inst, payload in payloads.items():
+            target = paths.inst_proactive_dir(inst) / "state.json"
+            if target.exists():
+                continue
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tmp = target.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(target)
+                written += 1
+            except Exception as e:
+                logger.warning(f"[chatcore_neo] 主动消息状态迁移失败（{inst}）：{e!r}")
+        if written:
+            bak = legacy.with_name(f"state.legacy-{time.strftime('%Y%m%d-%H%M%S')}.json")
+            try:
+                legacy.replace(bak)
+            except Exception:
+                pass
+            logger.info(f"[chatcore_neo] 主动消息状态已按实例拆分：{written} 个实例"
+                        + f"（旧文件保留为 {bak.name}）")
+
     def _make_runtime(self, inst: str):
         """按实例配置装配一套子对象。
 
         这些对象在旧版是 `__init__` 里用**全局配置**固化出来的；实例化之后
-        每个实例必须有自己的那份，否则 BotB 会跑 BotA 的注意力参数。
+        每个实例必须有自己的那份，否则 Sui 会跑 Banyan 的注意力参数。
         """
         from types import SimpleNamespace
         cfg = self.cfg_of(inst)
@@ -504,14 +575,22 @@ class ChatCoreNeoPlugin(Star):
             others_window_seconds=float(n(c("attention_others_window"), 60.0)),
             others_density_threshold=int(n(c("attention_others_limit"), 6)),
         )
+        # 主动消息是**独立功能**（不再读实例配置里的 enable_proactive /
+        # proactive_*）：默认参数来自 proactive/settings.json，状态落
+        # instances/<inst>/proactive/state.json —— 每实例一份，否则 Banyan
+        # 的会话覆盖会被 Sui/Cyrene 的调度器一起读到（用户 2026-10-30 报的问题）。
+        pd = proactive_settings()
         scheduler = ProactiveScheduler(
-            enabled=bool(c("enable_proactive", True)),
-            min_interval_min=int(n(c("proactive_min_interval"), 45)),
-            idle_threshold_min=int(n(c("proactive_idle_minutes"), 90)),
-            quiet_hours=str(c("proactive_quiet_hours", "") or ""),
-            silent_max=int(n(c("proactive_silent_max"), 2)),
+            enabled=True,                      # 功能级：没有"实例级总开关"了
+            min_interval_min=int(pd.get("min_interval", 45)),
+            idle_threshold_min=int(pd.get("idle_minutes", 90)),
+            quiet_hours=str(pd.get("quiet_hours", "") or ""),
+            silent_max=int(pd.get("silent_max", 2)),
+            state_path=paths.inst_proactive_dir(inst) / "state.json",
             known=self._session_known,
         )
+        # 每个实例只管自己前缀下的会话；人格/记忆组按 umo 自动归实例。
+        scheduler.set_scope(lambda umo, _i=inst: inst_of_umo(umo) == _i)
         # 每次 tick 出话前强刷一次 AstrBot 会话存活集：孤儿会话一旦被用户
         # 删掉，下一轮 tick 就不会再被当成候选（见 _refresh_alive）。
         scheduler.set_pre_tick(lambda: self._refresh_alive(force=True))
@@ -831,6 +910,15 @@ class ChatCoreNeoPlugin(Star):
             gname = self.groups.group_of(umo)
             pid = self.groups.persona_of(gname)
             doc = self.personas.get(pid) if pid else None
+            # 组人格也必须过实例授权：`_persona_for` 取人格时本来就会过滤，
+            # 但这里如果不拦，会**先把群名片改成那个人格名、并给模型写一条
+            # "你现在扮演 X"的提醒**，下一轮 `_persona_for` 又回退到别的人格
+            # —— 表现为"群名片叫 A、说话是 B"，且那一轮模型可能自称错角色。
+            if doc is not None and not self._persona_ok(umo, doc):
+                logger.warning(
+                    f"[chatcore_neo] 组「{gname}」的人格 {doc.id!r} 未授权给实例 "
+                    f"{inst_of_umo(umo)}，已跳过应用（不改名片、不写切换提醒）")
+                doc = None
             if doc is not None:
                 cur = self._persona_for(umo)
                 self._session_persona.set(umo, doc.id)
@@ -842,7 +930,11 @@ class ChatCoreNeoPlugin(Star):
                         "不要再用旧角色的自称或人名。"
                     )
                     self._spawn(self._set_group_card(umo, doc))
-            self.costars.set(umo, self.groups.costars_of(gname))
+            # 副人格同理：`_costar_docs` 读取时会过滤未授权的，
+            # 这里只把「本实例真正可用」的那些写进去，避免存储里留下脏 id。
+            costars = [p for p in (self.groups.costars_of(gname) or [])
+                       if self._persona_ok(umo, self.personas.get(p))]
+            self.costars.set(umo, costars)
         except Exception as e:
             logger.warning(f"[chatcore_neo] 应用人格组失败: {e!r}")
 
@@ -1096,12 +1188,15 @@ class ChatCoreNeoPlugin(Star):
             except Exception:
                 pass
             try:
+                # 主动消息的默认参数是**功能级**的（proactive/settings.json），
+                # 不再来自实例配置；这里只把最新值推给每条实例循环。
+                pd = proactive_settings()
                 s = rt.scheduler
-                s.min_interval = max(1, int(n(c("proactive_min_interval"), 45))) * 60
-                s.idle_threshold = max(1, int(n(c("proactive_idle_minutes"), 90))) * 60
-                s.quiet = parse_quiet_hours(str(c("proactive_quiet_hours", "") or ""))
-                s.silent_max = max(0, int(n(c("proactive_silent_max"), 2)))
-                s.apply_enabled(bool(c("enable_proactive", True)))
+                s.min_interval = max(1, int(pd.get("min_interval", 45))) * 60
+                s.idle_threshold = max(1, int(pd.get("idle_minutes", 90))) * 60
+                s.quiet = parse_quiet_hours(str(pd.get("quiet_hours", "") or ""))
+                s.silent_max = max(0, int(pd.get("silent_max", 2)))
+                s.apply_enabled(True)
                 applied.append(f"{iid}:scheduler")
             except Exception:
                 pass
@@ -1200,8 +1295,8 @@ class ChatCoreNeoPlugin(Star):
         try:
             uid = str(event.get_sender_id() or "").strip()
             name = str(event.get_sender_name() or "").strip()
-            # 平台偶尔把 QQ 号当昵称返回（`10004` → `"10004"`）。
-            # 那不是昵称，存下来只会让页面上出现「10004（10004）」。
+            # 平台偶尔把 QQ 号当昵称返回（`100000005` → `"100000005"`）。
+            # 那不是昵称，存下来只会让页面上出现「100000005（100000005）」。
             if name == uid:
                 name = ""
             if uid and name and self._user_names.get(uid) != name:
@@ -1243,9 +1338,9 @@ class ChatCoreNeoPlugin(Star):
 
         群聊的 `uid` 就是发送者；私聊的 `uid` 是空串（状态按会话级存），
         旧写法 `uid or umo` 于是把私聊印象写成了
-        `_impressions/BotA_FriendMessage_10001.json` —— 既在管理页被
+        `_impressions/Banyan_FriendMessage_100000001.json` —— 既在管理页被
         当成"把 umo 当 uid"的垃圾文件，又让老插件留下的
-        `_impressions/10001.json`（真印象）永远读不到。
+        `_impressions/100000001.json`（真印象）永远读不到。
         私聊里发送者就是对方，用 sender_id 作键才是对的
         （`/impression` 命令早就是 `sender_id or umo`，两边从此一致）。
         """
@@ -1514,7 +1609,7 @@ class ChatCoreNeoPlugin(Star):
                 # `is_at_or_wake_command` 置真，所以不排除就会在群里被下面第 ③ 条拦掉。
                 #
                 # 线上实录（戳一戳 llm 模式，群里）：
-                #   戳一戳已重入管道 umo='...:GroupMessage:10003' 成功=True
+                #   戳一戳已重入管道 umo='...:GroupMessage:200000001' 成功=True
                 #   闸门拦截：唤醒前缀唤醒，未 @/引用机器人　文本='（对方戳了你一下）'
                 # 私聊因为第 ① 条早就放行了，所以**只在群里复现**。
                 return
@@ -1637,7 +1732,14 @@ class ChatCoreNeoPlugin(Star):
 
             # 解析本轮说话人：群聊用发送者 uid，私聊用会话对象
             uid = self._sender_id(event) if not is_private else ""
-            # 特权按**会话**解析：分会话覆盖（`BotB`→朋友的号）优先于全局
+            # 记忆/近况的「归属人」必须与上面那个 uid 解耦。
+            # 私聊里 `uid` 被强制置空（特权判定把所有私聊当 intimate），但把它
+            # 当记忆键用会出事：①`GroupJournal.recent()` 见空 uid 直接 `return []`
+            # —— 于是在群里聊完再私聊，bot 完全不知道刚聊过什么（用户 2026-10-29
+            # 报的"记忆组坏了"就是这个）；②私聊写入的记忆条目 uid 为空，而召回
+            # 只在不同非空 uid 之间过滤，等于**别人私聊的记忆会被你的群聊召回**。
+            mem_uid = (self._sender_id(event) or "") if is_private else uid
+            # 特权按**会话**解析：分会话覆盖（`Sui`→朋友的号）优先于全局
             tier = self.privilege.tier(uid, scope=umo) if uid else "intimate"
             tier_label = doc.world_role or ""
 
@@ -1716,11 +1818,11 @@ class ChatCoreNeoPlugin(Star):
                 _q = event.message_str or ""
                 logger.info(
                     f"[chatcore_neo] 记忆召回·请求 umo={umo!r} key={mem_key!r} "
-                    f"persona={doc.id!r} uid={uid!r} 查询={_q[:50]!r}")
+                    f"persona={doc.id!r} uid={mem_uid!r} 查询={_q[:50]!r}")
                 _t0 = time.time()
                 try:
                     memories = await self.memory.recall_texts(
-                        mem_key, _q, persona=doc.id, uid=uid,
+                        mem_key, _q, persona=doc.id, uid=mem_uid,
                         persona_labels=self._persona_labels(),
                         policy=int(self._cfg("memory_persona_policy", 0) or 0))
                     _ms = (time.time() - _t0) * 1000
@@ -1816,7 +1918,7 @@ class ChatCoreNeoPlugin(Star):
                 self._append_dynamic(req, result.dynamic_text)
 
             # 人格组·跨会话近况：这个人在**同组其他会话**里最近说过什么
-            _gr = self._group_recent_block(umo, uid)
+            _gr = self._group_recent_block(umo, mem_uid)
             if _gr:
                 self._append_dynamic(req, _gr)
                 self._stats["injected"] += 1
@@ -1845,6 +1947,7 @@ class ChatCoreNeoPlugin(Star):
             event.set_extra(X_UMO, umo)
             event.set_extra(X_PERSONA, doc.id)
             event.set_extra(X_UID, uid)
+            event.set_extra(X_MEM_UID, mem_uid)
             event.set_extra(X_TIER, tier)
             event.set_extra(X_USER_MSG, event.message_str or "")
             # 登记本轮触发消息，供撤回取消匹配
@@ -2003,6 +2106,7 @@ class ChatCoreNeoPlugin(Star):
             umo = event.get_extra(X_UMO)
             pid = event.get_extra(X_PERSONA)
             uid = event.get_extra(X_UID, "")
+            mem_uid = event.get_extra(X_MEM_UID, "") or uid
             user_msg = event.get_extra(X_USER_MSG, "")
             if not umo or not pid:
                 return
@@ -2061,7 +2165,7 @@ class ChatCoreNeoPlugin(Star):
             # 记忆写入放后台任务，不阻塞本轮回复；合成事件无真实用户消息，跳过
             if self.memory.available and user_msg.strip() and not simulated:
                 self._spawn(self._remember(
-                    umo, pid, uid, user_msg, resp.completion_text or "",
+                    umo, pid, mem_uid, user_msg, resp.completion_text or "",
                     event.get_sender_name() or ""))
 
             # 印象总结同样后台化（到轮数阈值才真的跑）。
@@ -2462,8 +2566,10 @@ class ChatCoreNeoPlugin(Star):
             if doc is None:
                 return json.dumps({
                     "success": False, "error": "not_found",
-                    "message": self._not_found(want or "（空）"),
-                    "candidates": self.personas.suggest(want) if want else [],
+                    "message": self._not_found(want or "（空）", umo),
+                    "candidates": [p for p in (self.personas.suggest(want)
+                                               if want else [])
+                                   if self._persona_ok(umo, self.personas.get(p))],
                 }, ensure_ascii=False)
             old = self._persona_for(umo)
             if old is not None and old.id == doc.id:
@@ -2625,8 +2731,13 @@ class ChatCoreNeoPlugin(Star):
         try:
             mid = str(raw.get("message_id", "") or "")
             umo = event.unified_msg_origin
-            if bool(self._cfg("enable_recall_cancel", True)) and mid \
-                    and self._active_triggers.get(umo) == mid:
+            # 「这条被撤回的消息，是不是本实例因此开过口的那条」。
+            # 同一个群可能挂着多个 bot，撤回通知**每个实例都会收到**
+            # （OneBot 把 notice 广播给所有连接），所以这里必须门控：
+            # 2026-11-08 实测群 200000001，`^test` 只有 Banyan 请求过主代理，
+            # 但两个实例都拍了 —— 就是缺这道闸。
+            triggered = bool(mid) and self._active_triggers.get(umo) == mid
+            if bool(self._cfg("enable_recall_cancel", True)) and triggered:
                 from astrbot.core.utils.active_event_registry import (
                     active_event_registry)
                 n = active_event_registry.request_agent_stop_all(umo, exclude=event)
@@ -2634,10 +2745,104 @@ class ChatCoreNeoPlugin(Star):
                     self._stats.get("recalls_cancelled", 0) + 1
                 logger.info(f"[chatcore_neo] 撤回取消: {umo} 消息 {mid} "
                             f"（停止 {n} 个进行中的 agent）")
+            if triggered:
+                self._spawn_recall_poke(event, raw, umo)
+            else:
+                logger.info(f"[chatcore_neo] 撤回通知跳过（非本实例触发消息）"
+                            f" {umo} 消息 {mid}")
             self._active_triggers.pop(umo, None)
         except Exception as e:
             logger.debug(f"[chatcore_neo] 撤回取消处理异常: {e!r}")
         return True
+
+    # ---------------------------------------------------------- 撤回拍一拍
+    def _recall_poke_target(self, raw: dict) -> tuple[str, str]:
+        """从撤回通知里取 (群号, 该拍的人)；私聊时群号为空串。"""
+        op = str(raw.get("operator_id") or "").strip()
+        sender = str(raw.get("user_id") or "").strip()
+        who = op if op and op != "0" else sender
+        gid = str(raw.get("group_id") or "").strip()
+        return (gid if gid and gid != "0" else "", who)
+
+    def _spawn_recall_poke(self, event: AstrMessageEvent, raw: dict,
+                           umo: str) -> None:
+        """识别到撤回通知时拍一拍该用户。
+
+        为什么要 spawn：`_handle_recall` 是同步函数（在 on_message 里直接调），
+        而 call_action 是 IO —— 不 await 才不至于把整条消息的管道拖住。
+        冷却 3 秒：一次撤回可能同时来 group_recall 与通知重投，别拍成连击。
+        """
+        try:
+            if not bool(self._cfg("enabled", True)):
+                return
+            if not bool(self._cfg("enable_recall_poke", True)):
+                return
+            gid, who = self._recall_poke_target(raw)
+            me = str(event.get_self_id() or "")
+            if not who or who == me:
+                return
+            now = time.time()
+            # 同一条被撤回的消息只拍一次：多 bot 同群时每个实例都会收到同一条
+            # notice（message_id 相同），而本插件在同一个进程里服务所有实例，
+            # 用 (群号|会话语, message_id) 认领一次就够。30 秒窗口。
+            claim = f"{gid or umo}:{str(raw.get('message_id') or '')}"
+            if not hasattr(self, "_recall_poke_claims"):
+                self._recall_poke_claims = {}
+            seen = self._recall_poke_claims.get(claim, 0.0)
+            if now - float(seen) < 30.0:
+                logger.info(f"[chatcore_neo] 撤回拍一拍去重（同一条消息已拍过）"
+                            f" {claim}")
+                return
+            self._recall_poke_claims[claim] = now
+            if len(self._recall_poke_claims) > 256:
+                cutoff = now - 30.0
+                self._recall_poke_claims = {
+                    k: v for k, v in self._recall_poke_claims.items()
+                    if v > cutoff}
+            if not hasattr(self, "_recall_poke_at"):
+                self._recall_poke_at = {}
+            if now - float(self._recall_poke_at.get(umo, 0.0)) < 3.0:
+                logger.debug(f"[chatcore_neo] 撤回拍一拍冷却中 umo={umo!r}")
+                return
+            self._recall_poke_at[umo] = now
+            try:
+                inst = umo.split(":", 1)[0] if umo else ""
+            except Exception:
+                inst = ""
+            bot = getattr(event, "bot", None)
+            if not callable(getattr(bot, "call_action", None)):
+                bot = self._platform_client(inst)
+            self._spawn(self._poke_user(bot, gid, who, umo))
+        except Exception as e:
+            logger.debug(f"[chatcore_neo] 撤回拍一拍派发失败: {e!r}")
+
+    async def _poke_user(self, bot, gid: str, who: str, umo: str) -> None:
+        """真发一次拍一拍。接口不存在就安静跳过 —— 那是"平台办不到"，不是错。"""
+        if bot is None:
+            logger.debug(f"[chatcore_neo] 撤回拍一拍：找不到平台客户端 {umo!r}")
+            return
+        if gid:
+            attempts = (
+                ("group_poke", {"group_id": int(gid), "user_id": int(who)}),
+                ("send_poke", {"group_id": int(gid), "user_id": int(who)}),
+            )
+        else:
+            attempts = (
+                ("friend_poke", {"user_id": int(who)}),
+                ("send_poke", {"user_id": int(who)}),
+            )
+        last = ""
+        for action, kwargs in attempts:
+            try:
+                await asyncio.wait_for(bot.call_action(action, **kwargs),
+                                       timeout=5)
+                logger.info(f"[chatcore_neo] 撤回拍一拍已发送 {action} "
+                            f"群={gid or '-'} 用户={who} umo={umo!r}")
+                return
+            except Exception as e:
+                last = f"{action}: {e!r}"
+        logger.info(f"[chatcore_neo] 撤回拍一拍未成功（接口不支持）"
+                    f" 群={gid or '-'} 用户={who} 末次={last}")
 
     def _maybe_set_group_card(self, event: AstrMessageEvent,
                               doc: PersonaDoc) -> None:
@@ -2773,7 +2978,7 @@ class ChatCoreNeoPlugin(Star):
     def _poke_sender(self, event: AstrMessageEvent) -> dict | None:
         """戳一戳**发起人**的 sender 骨架（uid + 昵称），供合成事件使用。
 
-        poke 事件通常不带昵称（日志里是 `10001/10001`，平台把 QQ 号
+        poke 事件通常不带昵称（日志里是 `100000001/100000001`，平台把 QQ 号
         当昵称返回），所以先取事件自带、缺了再从本地昵称表补、再缺就用 uid
         顶上。取不到 uid 时返回 None，让调用方回退到事件模板。
         """
@@ -3471,7 +3676,7 @@ class ChatCoreNeoPlugin(Star):
            里调用，也就是"机器人真的在这里回过话"。于是：
            * 正常聊过的会话 → 有状态目录 → 第一层通过；
            * 测试脚本打进来的假会话（`webchat:FriendMessage:webchat!astrbot!
-             newapi-balance-e2e-*`、`BotB:GroupMessage:1`）只在 `on_any_message`
+             newapi-balance-e2e-*`、`Sui:GroupMessage:1`）只在 `on_any_message`
              里被记了账本，没有状态目录 → 未知，不再开口、不再显示、可一键清。
 
         2. **AstrBot 侧还认这个会话**（DB `conversations` 里还有该 UMO 的
@@ -3505,24 +3710,40 @@ class ChatCoreNeoPlugin(Star):
         except Exception:
             return True
 
-    async def _emit_proactive(self, umo: str) -> bool:
-        """合成事件 → 投回原生队列。**本插件不做任何 provider 调用。**"""
+    async def _emit_proactive(self, umo: str, inst: str = "") -> bool:
+        """合成事件 → 投回原生队列。**本插件不做任何 provider 调用。**
+
+        主动消息是独立功能，但**会话仍属于某个实例**：整轮合成必须在那个
+        实例的上下文里跑（`use_inst`），否则 `_cfg` / 分段 / TTS 等按实例
+        隔离的配置会错用默认实例；状态也要写回发起这条循环的调度器
+        （每个实例一份 state.json），不能都记到 `self.scheduler` 上。
+        """
         from .core.proactive import SIMULATED_USER_TEXT
+        inst = inst or inst_of_umo(umo)
+        try:
+            sched = self._rt(inst).scheduler if inst else self.scheduler
+        except Exception:
+            sched = self.scheduler
         tpl = self.templates.get(umo)
         if tpl is None:
             # 没有模板就没法合成（该会话还没来过消息）——记录并跳过
             logger.debug(f"[chatcore_neo] 主动消息跳过（无事件模板）: {umo}")
             return False
-        ev = synthesize_event(tpl, SIMULATED_USER_TEXT, self.context, umo=umo)
-        if ev is None:
-            logger.warning("[chatcore_neo] 无法合成事件（平台事件类不匹配），"
-                           "主动消息未发出")
-            return False
-        ok = await compat.reenter_pipeline(ev, context=self.context,
-                                           source="proactive")
+        tok = self.use_inst(inst) if inst else None
+        try:
+            ev = synthesize_event(tpl, SIMULATED_USER_TEXT, self.context, umo=umo)
+            if ev is None:
+                logger.warning("[chatcore_neo] 无法合成事件（平台事件类不匹配），"
+                               "主动消息未发出")
+                return False
+            ok = await compat.reenter_pipeline(ev, context=self.context,
+                                               source="proactive")
+        finally:
+            if tok is not None:
+                self.end_inst(tok)
         if ok:
-            self.scheduler.note_proactive(umo)
-            logger.info(f"[chatcore_neo] 主动消息已重入管道: {umo}")
+            sched.note_proactive(umo)
+            logger.info(f"[chatcore_neo] 主动消息已重入管道: {umo}（{inst or '?'}）")
         return ok
 
     # ------------------------------------------------------------------ 流式传输
@@ -3769,6 +3990,9 @@ class ChatCoreNeoPlugin(Star):
                 event._has_send_oper = True
             except Exception:
                 pass
+            # 收尾：把"只解析出标记、始终没有正文"的残留组件丢掉 ——
+            # 单独一个 Reply/At 发出去就是 QQ 里那种空白引用气泡。
+            ctx.pop("pending_comps", None)
             ms = (time.time() - t0) * 1000
             stats["last_turn_ms"] = int(ms)
             logger.info(
@@ -3801,7 +4025,11 @@ class ChatCoreNeoPlugin(Star):
         from astrbot.core.message.message_event_result import MessageChain
         from astrbot.api.message_components import At, Plain, Reply
 
-        comps: list = []
+        # `pending_comps`：上一段只解析出标记、没有正文时攒下的组件
+        # （典型：模型把 `[[reply:id]]` 单独放在一个分片里）。
+        # 必须等下一段正文一起发，否则 QQ 里会出现"只有一个引用、没有内容"的空白气泡。
+        comps: list = list(ctx.get("pending_comps") or [])
+        ctx["pending_comps"] = []
         text = strip_legacy_segment_marks(raw or "")
         if ctx.get("markers"):
             try:
@@ -3828,7 +4056,9 @@ class ChatCoreNeoPlugin(Star):
             text = strip_markers(text)
         cleaned = clean_segments([text])
         text = cleaned[0] if cleaned else ""
-        if not text and not comps:
+        if not text:
+            if comps:
+                ctx["pending_comps"] = comps
             return False, 0
 
         iv = float(ctx.get("interval") or 0.0)
@@ -3885,6 +4115,10 @@ class ChatCoreNeoPlugin(Star):
                        if isinstance(c, Plain)).strip()
         if not text:
             return
+        if _is_interruption_text(text):
+            logger.info(f"[chatcore_neo] 流式兜底跳过中断文案 {text!r} "
+                        f"umo={event.unified_msg_origin!r}")
+            return
         comps = [c for c in chain if not isinstance(c, Plain)]
         comps.append(Plain(text))
         try:
@@ -3902,6 +4136,24 @@ class ChatCoreNeoPlugin(Star):
         """对最终要发出去的文本做标记解析、分段，并按需附语音。"""
         if not self._cfg("enabled", True):
             return
+        # 撤回取消/停轮：框架会把中断文案当最终回复塞进链子。它不是正文，
+        # 清空链子即可让 respond 阶段走 "effective message chain is empty;
+        # skipping the respond stage" 分支（respond/stage.py:346），一个字都不发。
+        try:
+            res0 = event.get_result()
+            chain0 = list(getattr(res0, "chain", None) or []) \
+                if res0 is not None else []
+            if chain0 and all(isinstance(getattr(c, "text", None), str)
+                              for c in chain0):
+                text0 = "".join(c.text for c in chain0).strip()
+                if _is_interruption_text(text0):
+                    res0.chain = []
+                    logger.info(
+                        f"[chatcore_neo] 已吞掉框架中断文案 {text0!r} "
+                        f"umo={event.unified_msg_origin!r}")
+                    return
+        except Exception as e:
+            logger.debug(f"[chatcore_neo] 中断文案判定失败: {e!r}")
         # 流式接管过的轮次：文本已经**逐段实时发出**了（见 `_stream_deliver`），
         # 这里再处理一次是纯浪费 —— 框架对 STREAMING_FINISH 的结果也不会
         # 再发给用户（respond 阶段直接 return），改了链子没人看，
@@ -4066,13 +4318,22 @@ class ChatCoreNeoPlugin(Star):
                         segs = [text] if text else []
                     for s in segs:
                         new_chain.append(Plain(s))
+                # 同理（非流式）：清洗完一个字都没剩下时，别把 Reply 单独发出去
+                # —— 那会是一条"只有引用、没有内容"的空白消息。
+                if not any(isinstance(c, Plain) and (getattr(c, "text", "") or "").strip()
+                           for c in new_chain):
+                    new_chain = [c for c in new_chain if not isinstance(c, Reply)]
                 if new_chain:
                     res.chain = new_chain
             except Exception as e:
                 logger.debug(f"[chatcore_neo] 标记/分段处理失败: {e!r}")
 
         # ---- 2) TTS（独立于上面两个开关，失败静默降级为纯文字）----
-        if self.tts.enabled:
+        # **命令输出永不合成语音**：指令返回的是结构化文本（帮助列表、数值
+        # 结果、路径、人格名…），念出来既没有意义，又会把一次命令变成
+        # 「一条文字 + 一条语音」两条消息。这与上面「命令输出不参与分段」
+        # 同源 —— 命令结果不是聊天回复，不该走回复的输出管线。
+        if self.tts.enabled and not cmd_output:
             try:
                 text_only = "".join(
                     c.text for c in res.chain
@@ -4237,7 +4498,7 @@ class ChatCoreNeoPlugin(Star):
         if sub == "global" and len(args) >= 2:
             doc = self.personas.resolve(args[1])
             if doc is None:
-                yield event.plain_result(self._not_found(args[1]))
+                yield event.plain_result(self._not_found(args[1], event.unified_msg_origin))
                 return
             if not self._persona_ok(umo, doc):
                 yield event.plain_result(self._persona_denied(umo))
@@ -4327,7 +4588,7 @@ class ChatCoreNeoPlugin(Star):
                 return
             doc = self.personas.resolve(args[1])
             if doc is None:
-                yield event.plain_result(self._not_found(args[1]))
+                yield event.plain_result(self._not_found(args[1], event.unified_msg_origin))
                 return
             body = event.message_str.split(args[2], 1)[-1].strip()
             res = A.edit_section(doc, args[2], body)
@@ -4340,7 +4601,7 @@ class ChatCoreNeoPlugin(Star):
                 return
             doc = self.personas.resolve(args[1])
             if doc is None:
-                yield event.plain_result(self._not_found(args[1]))
+                yield event.plain_result(self._not_found(args[1], event.unified_msg_origin))
                 return
             rest = event.message_str.split(args[2], 1)[-1].strip()
             body = "" if rest == args[2] else rest
@@ -4354,7 +4615,7 @@ class ChatCoreNeoPlugin(Star):
                 return
             doc = self.personas.resolve(args[1])
             if doc is None:
-                yield event.plain_result(self._not_found(args[1]))
+                yield event.plain_result(self._not_found(args[1], event.unified_msg_origin))
                 return
             res = A.remove_section(doc, args[2])
             yield event.plain_result(("✅ " if res.ok else "❌ ") + res.message)
@@ -4367,7 +4628,7 @@ class ChatCoreNeoPlugin(Star):
                 return
             doc = self.personas.resolve(args[1])
             if doc is None:
-                yield event.plain_result(self._not_found(args[1]))
+                yield event.plain_result(self._not_found(args[1], event.unified_msg_origin))
                 return
             res = A.set_inject(doc, args[2], args[3])
             if res.ok:
@@ -4601,7 +4862,7 @@ class ChatCoreNeoPlugin(Star):
         # 兜底：把最后一个参数当人格名
         doc = self.personas.resolve(args[-1])
         if doc is None:
-            yield event.plain_result(self._not_found(args[-1]))
+            yield event.plain_result(self._not_found(args[-1], event.unified_msg_origin))
             return
         # 会话覆盖 + 群名片 + 下一轮切换提醒（与 persona_switch 工具共用）
         if not self._persona_ok(umo, doc):
@@ -4623,11 +4884,19 @@ class ChatCoreNeoPlugin(Star):
             "（/persona help 查看本清单）"
         )
 
-    def _not_found(self, name: str) -> str:
-        cands = self.personas.suggest(name)
+    def _not_found(self, name: str, umo: str = "") -> str:
+        """「找不到人格」的提示；候选只列**本实例可用**的。
+
+        `personas.suggest()` 是全池模糊匹配，不过滤实例授权的话，Sui 里打错字
+        会提示出一堆只有 Banyan 授权的人格名 —— 用户点了又被 not_granted 拒。
+        """
+        cands = [p for p in self.personas.suggest(name)
+                 if self._persona_ok(umo, self.personas.get(p))]
         msg = f"找不到人格「{name}」"
         if cands:
             msg += "\n你是不是想找：" + "、".join(cands)
+        elif umo:
+            msg += "\n（本实例没有相近的可用人格，完整名单见 /persona list）"
         return msg
 
     # ------------------------------------------------------------------ 卸载

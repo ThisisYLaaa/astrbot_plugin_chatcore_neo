@@ -19,11 +19,14 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any
 
 from .state.store import safe_segment
+from .proactive import DEFAULT_SETTINGS, load_settings, save_settings
+from .proactive import parse_quiet_hours as _parse_quiet
 
 API_PREFIX = "/astrbot_plugin_chatcore_neo"
 
@@ -112,7 +115,10 @@ def build_instances(plugin: Any) -> dict:
                 use_preset=bool(plugin.config.get("instance_new_preset", True)))
         except Exception:
             pass
-    loaded = store.loaded_ids()
+    # 只列 AstrBot 里还存在的实例：用户删掉的平台实例（如已删除的 Sui）
+    # 若继续出现在这里，配置页下拉会指向一个已经不存在的实例。
+    live = set(store.live_ids())
+    loaded = [i for i in store.loaded_ids() if i in live]
     rows = []
     for i in loaded:
         m = dict(store.meta(i))
@@ -129,12 +135,175 @@ def build_instances(plugin: Any) -> dict:
     return {"instances": rows, "default": plugin._default_inst}
 
 
+def _orphan_detail(plugin: Any, inst: str) -> dict:
+    """盘点一个「已移除实例」还占着什么：会话目录、记忆组、磁盘体积。"""
+    st = plugin.state
+    seg = safe_segment(inst)
+    dirs = [d for d in st.sessions()
+            if d == seg or d.startswith(seg + "_")]
+    groups = 0
+    try:
+        for meta in plugin.groups.all_groups().values():
+            if any(str(u).startswith(inst + ":")
+                   for u in (meta.get("members") or [])):
+                groups += 1
+    except Exception:
+        pass
+    size = 0
+    root = getattr(plugin._inst_store, "root", None)
+    pdir = root / inst if root is not None else None
+    if pdir is not None and pdir.is_dir():
+        try:
+            size = sum(f.stat().st_size for f in pdir.rglob("*") if f.is_file())
+        except Exception:
+            size = 0
+    return {"id": inst, "sessions": len(dirs), "groups": groups,
+            "bytes": size, "has_memory": bool(pdir and (pdir / "memory").is_dir())}
+
+
+def build_orphans(plugin: Any) -> dict:
+    """列出「磁盘上有、AstrBot 里已经没有」的实例（用户删掉的平台实例）。"""
+    store = plugin._inst_store
+    try:
+        ids = store.orphan_ids()
+    except Exception as e:
+        return {"orphans": [], "error": repr(e)}
+    return {"orphans": [_orphan_detail(plugin, i) for i in ids],
+            "live": store.live_ids()}
+
+
+def _purge_prefix_maps(plugin: Any, inst: str) -> int:
+    """从共享映射里删掉该实例的所有键（`Sui:xxx`），返回删除条数。"""
+    prefix = inst + ":"
+    removed = 0
+    maps = []
+    for obj in (getattr(plugin, "_session_persona", None),
+                getattr(getattr(plugin, "state", None), "session_persona", None),
+                getattr(getattr(plugin, "state", None), "inject_overrides", None),
+                getattr(plugin, "_session_params", None)):
+        if obj is not None and hasattr(obj, "items") and hasattr(obj, "pop"):
+            if all(obj is not m for m in maps):
+                maps.append(obj)
+    for m in maps:
+        try:
+            keys = [k for k, _v in m.items() if str(k).startswith(prefix)]
+        except Exception:
+            continue
+        for k in keys:
+            try:
+                m.pop(k)
+                removed += 1
+            except Exception:
+                pass
+    # 初始化标记（JsonSet）
+    init = getattr(getattr(plugin, "state", None), "session_initialized", None)
+    if init is not None:
+        try:
+            for k in [k for k in init if str(k).startswith(prefix)]:
+                init.discard(k)
+                removed += 1
+        except Exception:
+            pass
+    return removed
+
+
+def purge_orphan_instance(plugin: Any, inst: str, *, delete: bool = False) -> dict:
+    """归档（默认）或彻底删除一个「已移除实例」的全部插件数据。
+
+    为什么默认归档：用户删的是 AstrBot 里的平台实例，插件这边可能有
+    记忆库、人格授权、角色库等无价数据。先把 `instances/<id>/` 整体搬到
+    `plugin_data/_archive/instances/<id>-<时间戳>/`，再清掉共享映射里指向
+    它的键 —— 于是页面立刻"看不见它"，但想找回还能捞回来。
+    """
+    inst = str(inst or "").strip()
+    if not inst:
+        raise ValueError("inst 不能为空")
+    if any(x in inst for x in ("/", "\\", "..")) or inst in (".", ".."):
+        raise ValueError(f"非法的实例 id：{inst!r}")
+    store = plugin._inst_store
+    if inst in set(store.live_ids()):
+        raise ValueError(f"「{inst}」仍然是 AstrBot 里存在的实例，拒绝清理")
+    detail = _orphan_detail(plugin, inst)
+
+    # ① 会话状态目录（state/<safe_umo>/）
+    seg = safe_segment(inst)
+    removed_dirs = 0
+    st = plugin.state
+    for d in [d for d in st.sessions() if d == seg or d.startswith(seg + "_")]:
+        try:
+            shutil.rmtree(Path(st.root) / d, ignore_errors=True)
+            removed_dirs += 1
+        except Exception:
+            pass
+
+    # ② 共享映射（人格覆盖 / 注入覆盖 / 发言参数 / 初始化标记）
+    removed_keys = _purge_prefix_maps(plugin, inst)
+
+    # ③ 多人格同台
+    removed_costars = 0
+    try:
+        for umo in [u for u in plugin.costars.all() if str(u).startswith(inst + ":")]:
+            plugin.costars.clear(umo)
+            removed_costars += 1
+    except Exception:
+        pass
+
+    # ④ 记忆组成员
+    removed_members = 0
+    try:
+        umos = [u for meta in plugin.groups.all_groups().values()
+                for u in (meta.get("members") or [])
+                if str(u).startswith(inst + ":")]
+        if umos:
+            removed_members = len(plugin.groups.remove_many(umos))
+            plugin.groups.drop_empty()
+    except Exception:
+        pass
+
+    # ⑤ 实例目录：归档或删除
+    root = Path(getattr(store, "root", ""))
+    src = root / inst
+    archived_to = ""
+    if src.is_dir():
+        if delete:
+            shutil.rmtree(src, ignore_errors=True)
+        else:
+            dest = root.parent / "_archive" / "instances" / (
+                f"{inst}-{time.strftime('%Y%m%d-%H%M%S')}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+            archived_to = str(dest)
+
+    # ⑥ 运行期缓存
+    try:
+        store.forget(inst)
+        store.invalidate()
+    except Exception:
+        pass
+    for attr in ("_runtimes", "_inst_cfgs"):
+        try:
+            getattr(plugin, attr).pop(inst, None)
+        except Exception:
+            pass
+    try:
+        plugin._alive = None
+    except Exception:
+        pass
+
+    return {"ok": True, "id": inst, "deleted": bool(delete),
+            "archived_to": archived_to,
+            "removed_sessions": removed_dirs, "removed_keys": removed_keys,
+            "removed_costars": removed_costars, "removed_group_members": removed_members,
+            "before": detail, **{"orphans": build_orphans(plugin)["orphans"]}}
+
+
 def persona_pool_matrix(plugin: Any) -> dict:
     store = plugin._inst_store
     insts = [dict(m) for m in store.discover()]
     have = {m["id"] for m in insts}
+    # 已移除实例（磁盘还在、AstrBot 里已删除）不进矩阵：它们归「实例清理」卡处理
     for i in store.loaded_ids():
-        if i not in have:
+        if i not in have and i not in set(store.orphan_ids()):
             insts.append({"id": i, "enabled": True, "type": "",
                           "known": False})
     for m in insts:
@@ -302,8 +471,8 @@ def _safe_to_real(plugin: Any) -> dict:
 
     真实 umo 只有几个地方记着（会话人格表 / 注入覆盖表 的键）。旧实现还
     把 `st.sessions()` 的**目录名**也塞进映射（`out.setdefault(real, real)`），
-    等于把 safe 名当成了它自己 —— 于是还原不出来的会话就以 `BotA_..._
-    10006` 这种下划线名直接出现在页面上，看起来就是「没规格化的残留」。
+    等于把 safe 名当成了它自己 —— 于是还原不出来的会话就以 `Banyan_..._
+    100000003` 这种下划线名直接出现在页面上，看起来就是「没规格化的残留」。
     现在只接受含 `:` 的真实 umo 作为还原源。
     """
     try:
@@ -343,7 +512,7 @@ _DIR_UMO_RE = re.compile(
     r"^([^_]+)_(" + "|".join(re.escape(t) for t in SPEC_MSG_TYPES) + r")_(.+)$")
 # 私聊形态的历史印象文件名：`实例_FriendMessage_对方QQ`。
 # 旧代码 `uid or umo` 在私聊里（uid 恒为空）把印象写成了**以 umo 命名**的文件，
-# 例如 `BotA_FriendMessage_10001.json`。它不是"垃圾用户"，而是
+# 例如 `Banyan_FriendMessage_100000001.json`。它不是"垃圾用户"，而是
 # **那个真人自己**的计数 —— 所以按"私聊会话 = 对方"归到他名下，
 # 既不显示成待清理的残留，也不删任何东西。
 _DIR_PRIV_RE = re.compile(r"^([^_]+)_(FriendMessage|StrangerMessage)_(.+)$")
@@ -375,7 +544,7 @@ def _resolve_umo(plugin: Any, dirname: str) -> tuple[str, bool]:
 def _is_spec_uid(uid: str) -> bool:
     """用户 id 规格化：纯数字（QQ/昵称位 id）或以冒号分隔的平台 id。
 
-    垃圾实例是 `BotA_FriendMessage_10001` 这种把 umo safe 化后
+    垃圾实例是 `Banyan_FriendMessage_100000001` 这种把 umo safe 化后
     当 uid 的历史文件 —— 含下划线，会被排除。
     """
     u = str(uid)
@@ -477,7 +646,7 @@ def _impression_index(plugin: Any) -> tuple[dict[str, dict], list[str]]:
       * **规格化 uid**：纯数字 QQ / `平台:类型:id`；
       * **私聊形态的 umo 名**（`实例_FriendMessage_对方QQ`）：这是旧代码把
         私聊印象写成 umo 名留下的，归到**对方 QQ** 名下 —— 那本来就是他自己的
-        数据（老插件留下的 `10001.json` 是真印象，这两份是同一个人的）。
+        数据（老插件留下的 `100000001.json` 是真印象，这两份是同一个人的）。
 
     收不进去的（例如 `实例_GroupMessage_群号`，群号不是用户）才列成残留候选，
     交给「残留用户」清理 —— 不能因为不进索引就从页面上消失，那样用户
@@ -530,8 +699,17 @@ def build_sessions(plugin: Any, alive: set[str] | None = None) -> dict:
     users: dict[str, str] = {}
     labels: dict[str, str] = {}
     stale_sessions: list[dict] = []
+    orphan_insts = set()
+    try:
+        orphan_insts = set(plugin._inst_store.orphan_ids())
+    except Exception:
+        orphan_insts = set()
     for dirname in st.sessions():
         umo, spec = _resolve_umo(plugin, dirname)
+        # 已移除实例的会话直接不展示：它们由「实例清理」卡统一盘点/归档，
+        # 否则用户删了实例，会话下拉、记忆组、主动消息里还会冒出来一串。
+        if str(umo).split(":", 1)[0] in orphan_insts:
+            continue
         personas = st.personas_in(dirname)
         members = {p: st.members_in(dirname, p) for p in personas}
         lp = session_label_parts(umo, members, names, gnames)
@@ -568,7 +746,7 @@ def build_sessions(plugin: Any, alive: set[str] | None = None) -> dict:
     for uid, nm in names.items():
         users.setdefault(uid, nm)
     # 用户同样只留规格化 id（纯数字 QQ / 冒号平台 id）；像
-    # `BotA_FriendMessage_10001.json` 这种把 umo 当 uid 的历史文件
+    # `Banyan_FriendMessage_100000001.json` 这种把 umo 当 uid 的历史文件
     # （含下划线）归入残留，不再出现在用户下拉。
     clean_users: list[dict] = []
     stale_users: list[dict] = []
@@ -1006,8 +1184,6 @@ def _proactive_detail(plugin: Any) -> str:
     parts.append(f"{on} 个会话已开启" if on else "尚无会话开启")
     if off:
         parts.append(f"{off} 个会话已禁用")
-    if not s.enabled and on:
-        parts.append("全局未放行，已开启的会话也不生效")
     return " · ".join(parts)
 
 
@@ -1035,11 +1211,14 @@ def build_features(plugin: Any) -> list[dict]:
 
     # ① 各子系统对象自报的门（最贴近实现）
     try:
-        add("主动消息", _obj_flag(plugin.scheduler),
-            "enable_proactive",
-            _proactive_detail(plugin))
+        # 主动消息是**独立功能**（2026-10-30）：没有实例级总闸，
+        # "是否生效"看有没有会话 opt-in；循环恒在跑，只作细节说明。
+        sc = plugin.scheduler
+        live = bool(sc.any_session_enabled()) \
+            if callable(getattr(sc, "any_session_enabled", None)) else _obj_flag(sc)
+        add("主动消息", live, "proactive（分会话开启）", _proactive_detail(plugin))
     except Exception:
-        add("主动消息", False, "enable_proactive", "（读取失败）")
+        add("主动消息", False, "proactive（分会话开启）", "（读取失败）")
     add("戳一戳", _obj_flag(plugin.poke), "poke_enabled")
     add("连发合并", _obj_flag(plugin.merge), "merge_pending_messages")
     add("语音合成", _obj_flag(plugin.tts), "enable_tts",
@@ -1534,22 +1713,42 @@ def build_proactive(plugin: Any) -> dict:
             out["stale_proactive"] = stale
     except Exception as e:
         out["activity"] = {"error": repr(e)}
+    # 主动消息的参数默认值是**功能级**的（proactive/settings.json），
+    # 不再从实例配置里读 —— 用户在「主动消息」页自己改。
     try:
-        out["config"] = {
-            "quiet": plugin._cfg("proactive_quiet_hours", ""),
-            "min_interval": plugin._cfg("proactive_min_interval", 45),
-            "idle_minutes": plugin._cfg("proactive_idle_minutes", 90),
-            "silent_max": plugin._cfg("proactive_silent_max", 2),
-            "enabled": plugin._cfg("enable_proactive", True),
-        }
+        defaults = load_settings()
     except Exception:
-        out["config"] = {}
-    # 全局总闸的实际状态：`global` 是配置值，`running` 是循环真的在跑。
-    # 页面上两个都要摆出来 —— 只报一个就会重演"配置说关、它却在发"。
+        defaults = dict(DEFAULT_SETTINGS)
+    out["defaults"] = dict(defaults)
+    # 兼容旧页面字段：功能恒可用（没有实例级总开关），真正开关在会话上。
+    out["config"] = {**defaults, "enabled": True,
+                     "quiet": defaults.get("quiet_hours", ""),
+                     "min_interval": defaults.get("min_interval"),
+                     "idle_minutes": defaults.get("idle_minutes")}
+    # 每个实例一条调度循环：运行状态必须按实例报，否则页面自相矛盾。
     try:
         rep = out.get("report") if isinstance(out.get("report"), dict) else {}
+        insts = []
+        try:
+            _live = set(plugin._inst_store.live_ids())
+        except Exception:
+            _live = set()
+        ids = [i for i in (list((getattr(plugin, "_inst_cfgs", {}) or {}).keys())
+                           or [getattr(plugin, "_default_inst", "")])
+               if i and (not _live or i in _live)]
+        for iid in ids:
+            if not iid:
+                continue
+            try:
+                sc = plugin._rt(iid).scheduler
+                rp = sc.report() if callable(getattr(sc, "report", None)) else {}
+                insts.append({"id": iid,
+                              "running": bool(getattr(sc, "running", False)),
+                              "sessions_on": int((rp or {}).get("sessions_on", 0) or 0)})
+            except Exception:
+                insts.append({"id": iid, "running": False, "sessions_on": 0})
+        out["instances"] = insts
         out["effective"] = {
-            "global": bool(getattr(s, "enabled", False)),
             "running": bool(getattr(s, "running", False)),
             "sessions_on": int(rep.get("sessions_on", 0) or 0),
             "sessions_off": int(rep.get("sessions_off", 0) or 0),
@@ -1563,13 +1762,34 @@ def build_proactive(plugin: Any) -> dict:
     return out
 
 
+def set_proactive_defaults(plugin: Any, values: dict) -> dict:
+    """保存主动消息的**功能级默认参数**（不再是实例配置的一部分）。
+
+    会话里留空的项继承这里；写完立刻推给每个实例的调度器，无需重载插件。
+    """
+    saved = save_settings(values or {})
+    applied = 0
+    for rt in (getattr(plugin, "_runtimes", {}) or {}).values():
+        sc = getattr(rt, "scheduler", None)
+        if sc is None:
+            continue
+        try:
+            sc.min_interval = max(1, int(saved["min_interval"])) * 60
+            sc.idle_threshold = max(1, int(saved["idle_minutes"])) * 60
+            sc.quiet = _parse_quiet(str(saved.get("quiet_hours") or ""))
+            sc.silent_max = max(0, int(saved["silent_max"]))
+            applied += 1
+        except Exception:
+            pass
+    return {"defaults": saved, "applied": applied, **build_proactive(plugin)}
+
+
 def set_proactive_override(plugin: Any, umo: str, values: dict) -> dict:
     """设置某会话的主动消息覆盖（空参数则视为清除该会话覆盖）。
 
-    会话级 `enabled` 才是"这个会话要不要主动开口"的实际开关，而且
-    **全局不放行时它一律不作数**：`enable_proactive=false` 时，这里写
-    `enabled: true` 只会被存下来、不会出话（见 `proactive.should_emit`）。
-    所以返回值里带上 `effective`，页面据此提示用户。
+    会话级 `enabled` 是"这个会话要不要主动开口"的**唯一**开关：
+    主动消息是独立功能，没有实例级总闸（`enable_proactive` 已从 schema 删除）。
+    参数里留空的项继承「主动消息」页的功能默认值。
     """
     ov = plugin.scheduler.set_override(umo, values or {})
     # 已放行但循环因故没起来（例如刚被放行）时补一次；没放行时
@@ -1717,7 +1937,7 @@ def set_session_privileges(plugin: Any, scope: str, qids: Any) -> dict:
     """把某实例的特权用户设为**第一名**（只允许一名）。"""
     inst = str(scope or "").strip().strip(":")
     if not inst:
-        raise RuntimeError("scope 不能为空（传实例 id，如 BotA）")
+        raise RuntimeError("scope 不能为空（传实例 id，如 Banyan）")
     if isinstance(qids, (list, tuple)):
         uid = next((str(q).strip() for q in qids if str(q).strip()), "")
     else:
@@ -1745,16 +1965,64 @@ def clear_session_privileges(plugin: Any, scope: str) -> dict:
 
 # ---------------------------------------------------------------- 记忆组
 
+def _instance_persona_ids(plugin: Any, inst: str) -> list[str]:
+    """某实例**当前可用**的人格 id 列表（空授权表 = 全部可用）。
+
+    统一出口：页面别再自己拿 `grants` 判断可用性 ——
+    「空授权表 = 不限制」这条规则只在 PersonaPool 里实现一次。
+    """
+    try:
+        docs = plugin.personas.all()
+    except Exception:
+        return []
+    pool = getattr(plugin, "_persona_pool", None)
+    if pool is None:
+        return [d.id for d in docs]
+    out: list[str] = []
+    for d in docs:
+        try:
+            if pool.is_available(inst, d.id):
+                out.append(d.id)
+        except Exception:
+            continue
+    return out
+
+
 def build_groups(plugin: Any) -> dict:
     """人格组：组定义（含人格/副人格）+ 未归组会话 + 可选人格。"""
     g = plugin.groups
     groups = g.all_groups()
-    # ungrouped 必须拿**真实 umo** 去比：groups 里存的是真实 umo，
-    # 而 state.sessions() 给的是 safe 目录名，直接相减会让所有会话都
-    # 被列成"未归组"（实测 18 个全中，真实只有 11 个未归组）。
-    s2r = _safe_to_real(plugin)
-    real_all = [s2r.get(d, d) for d in plugin.state.sessions()]
+    # 会话目录名 → 真实 umo：groups 里存的是真实 umo（`实例:类型:id`），而
+    # `state.sessions()` 给的是 safe 目录名（冒号被换成下划线）。这里必须走
+    # `_resolve_umo`（含 `实例_类型_id` 反推），否则**没有状态记录的会话**会以
+    # `Banyan_GroupMessage_xxx` 的形式漏进未归组；再点「加入」时实例解析不出来，
+    # 就会报「人格组已属于实例 Banyan，不能把 Banyan_GroupMessage_xxx 并进去」。
+    names = _user_names(plugin)
+    gnames = _group_names(plugin)
+    try:
+        orphan_insts = set(plugin._inst_store.orphan_ids())
+    except Exception:
+        orphan_insts = set()
+    # 已移除实例的会话不参与「记忆组」页：成员列表里留着它们，
+    # 用户会以为那个实例还在（会话/记忆实际已不可用）。
+    groups = {name: {**meta,
+                     "members": [u for u in (meta.get("members") or [])
+                                 if str(u).split(":", 1)[0] not in orphan_insts]}
+              for name, meta in groups.items()}
+    real_all: list[str] = []
+    labels: dict[str, str] = {}
+    for dirname in plugin.state.sessions():
+        umo, spec = _resolve_umo(plugin, dirname)
+        if not spec or umo in labels:
+            continue
+        if str(umo).split(":", 1)[0] in orphan_insts:
+            continue
+        real_all.append(umo)
+        labels[umo] = session_label_parts(umo, None, names, gnames)["label"]
     grouped = {u for m in groups.values() for u in (m.get("members") or [])}
+    # 组里可能还留着已消失的会话：补一份标签，别让前端退化成裸 UMO
+    for u in grouped:
+        labels.setdefault(u, session_label_parts(u, None, names, gnames)["label"])
     try:
         personas = [{"id": d.id, "name": d.display_name}
                     for d in plugin.personas.all()]
@@ -1764,18 +2032,40 @@ def build_groups(plugin: Any) -> dict:
     try:
         for m in plugin._inst_store.discover():
             iid = m["id"]
+            grants: list[str] = []
+            try:
+                grants = list(plugin._persona_pool.grants(iid))
+            except Exception:
+                grants = []
             insts.append({"id": iid,
                           "enabled": bool(m.get("enabled", True)),
-                          "grants": plugin._persona_pool.grants(iid)})
+                          "grants": grants,
+                          # 空授权表 = 不限制（见 PersonaPool.is_available）。
+                          # 页面不能再拿 `grants` 当白名单直接过滤：那样
+                          # "不限制"的实例会只剩当前人格一个选项（2026-10-30 用户报的 bug）。
+                          "unrestricted": not grants,
+                          "available": _instance_persona_ids(plugin, iid)})
     except Exception:
         pass
     return {"groups": groups, "stats": g.stats(),
             "ungrouped": [u for u in real_all if u not in grouped],
-            "personas": personas, "instances": insts}
+            "labels": labels, "personas": personas, "instances": insts}
+
+
+def _norm_umo(raw: Any) -> str:
+    """safe 目录名（`实例_类型_id`）补成真实 umo；已经是 `实例:类型:id` 的原样返回。"""
+    s = str(raw or "").strip()
+    if not s or ":" in s:
+        return s
+    m = _DIR_UMO_RE.match(s)
+    if m:
+        return m.group(1) + ":" + m.group(2) + ":" + m.group(3)
+    return s
 
 
 def assign_group(plugin: Any, umos: Any, group: str) -> dict:
     items = list(umos) if isinstance(umos, (list, tuple)) else [umos]
+    items = [_norm_umo(u) for u in items]
     added = plugin.groups.assign_many(items, group)
     for u in added:
         try:
@@ -1787,6 +2077,7 @@ def assign_group(plugin: Any, umos: Any, group: str) -> dict:
 
 def remove_group(plugin: Any, umos: Any) -> dict:
     items = list(umos) if isinstance(umos, (list, tuple)) else [umos]
+    items = [_norm_umo(u) for u in items]
     removed = plugin.groups.remove_many(items)
     return {"removed": removed, **build_groups(plugin)}
 
@@ -2581,6 +2872,14 @@ def register(plugin: Any) -> list[str]:
     async def instances():
         return await _wrap(lambda: build_instances(plugin))
 
+    async def instances_orphans():
+        return await _wrap(lambda: build_orphans(plugin))
+
+    async def instances_purge(payload: dict | None = None):
+        d = await _payload(payload)
+        return await _wrap(lambda: purge_orphan_instance(
+            plugin, str(d.get("id", "")), delete=bool(d.get("delete"))))
+
     async def persona_pool():
         return await _wrap(lambda: persona_pool_matrix(plugin))
 
@@ -2619,6 +2918,11 @@ def register(plugin: Any) -> list[str]:
         d = await _payload(payload)
         return await _wrap(lambda: clear_session_privileges(
             plugin, str(d.get("scope", ""))))
+
+    async def proactive_defaults_set(payload: dict | None = None):
+        d = await _payload(payload)
+        return await _wrap(lambda: set_proactive_defaults(
+            plugin, (d.get("values") or {}) if isinstance(d, dict) else {}))
 
     async def proactive_override_set(payload: dict | None = None):
         d = await _payload(payload)
@@ -2753,11 +3057,17 @@ def register(plugin: Any) -> list[str]:
     add("/config", config_get, ["GET"], "读取插件配置（schema + 当前值）")
     add("/config/set", config_set, ["POST"], "批量修改配置并保存、热同步")
     add("/instances", instances, ["GET"], "实例清单（配置/授权/记忆库）")
+    add("/instances/orphans", instances_orphans, ["GET"],
+        "磁盘上还在、AstrBot 里已删除的实例")
+    add("/instances/purge", instances_purge, ["POST"],
+        "归档/删除已移除实例，并清掉指向它的会话与引用")
     add("/persona-pool", persona_pool, ["GET"], "人格池 × 实例授权矩阵")
     add("/persona-pool/grant", persona_pool_grant_, ["POST"], "给实例授权一个可用人格")
     add("/persona-pool/revoke", persona_pool_revoke_, ["POST"], "撤销某实例的人格授权")
     add("/persona-pool/bulk", persona_pool_bulk_, ["POST"], "整行保存某实例的授权列表")
     add("/persona-pool/default", persona_pool_default_, ["POST"], "设置某实例的默认人格")
+    add("/proactive/defaults", proactive_defaults_set, ["POST"],
+        "保存主动消息的功能级默认参数（会话留空时继承）")
     add("/proactive/override", proactive_override_set, ["POST"],
         "设置某会话的主动消息参数覆盖")
     add("/proactive/override/clear", proactive_override_clear, ["POST"],

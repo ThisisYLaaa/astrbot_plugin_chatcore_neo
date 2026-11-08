@@ -48,7 +48,7 @@
     "instance_new_preset": {
         "description": "新实例套用「最小可用」预设",
         "type": "bool",
-        "hint": "打开时，新建实例会在模板基础上覆盖 19 项：关注意力、分段、标记、主动消息、TTS、流式、不回复判定、意图、图谱检索、多人格同台、角色名识别、好感/淫乱/印象、戳一戳、连发合并，并把 privilege_uid 清空。关闭 = 新实例完全照抄模板。\n⚠️ 本页（框架配置）**只是模板**：改这里不会影响已存在实例的 config.json。",
+        "hint": "打开时，新建实例会在模板基础上覆盖一批「按实例隔离」的项：关注意力、分段、标记、TTS、流式、不回复判定、意图、图谱检索、多人格同台、角色名识别、好感/淫乱/印象、戳一戳、连发合并，并把 privilege_uid 清空。主动消息不在此列——它是独立功能，参数在「主动消息」页。关闭 = 新实例完全照抄模板。\n⚠️ 本页（框架配置）**只是模板**：改这里不会影响已存在实例的 config.json。",
         "default": true
     },
     "unrestricted_list": {
@@ -1093,6 +1093,12 @@
         "hint": "用户撤回消息时，若回复还没发出则一并取消。",
         "default": true
     },
+    "enable_recall_poke": {
+        "description": "撤回时拍一拍对方",
+        "type": "bool",
+        "hint": "识别到撤回通知（group_recall / friend_recall）后，拍一拍撤回的那个人。\n群聊发 group_poke、私聊发 friend_poke，平台不支持则静默跳过。3 秒内同一会话只拍一次。",
+        "default": true
+    },
     "merge_pending_messages": {
         "description": "合并用户连发的消息",
         "type": "bool",
@@ -1176,55 +1182,8 @@
             "poke_reply_mode": "text"
         }
     },
-    "enable_proactive": {
-        "description": "═══ ⑧ 主动消息 ═══\n启用主动消息",
-        "type": "bool",
-        "hint": "在会话安静一段时间后，由 bot 主动发起话题。这是本功能的**总开关（放行）**：关掉后整个功能停止，分会话配置一律不作数；打开它**不等于**所有会话都会主动开口 —— 还要在管理页「主动消息 → 分会话配置」里给具体会话选「开启」（opt-in，没有单独配置过的会话不会开口）。",
-        "default": true
-    },
-    "proactive_min_interval": {
-        "description": "最小间隔（分钟）",
-        "type": "int",
-        "default": 45,
-        "min": 1,
-        "max": 1440,
-        "condition": {
-            "enable_proactive": true
-        }
-    },
-    "proactive_idle_minutes": {
-        "description": "空闲阈值（分钟）",
-        "type": "int",
-        "hint": "会话安静超过该时长才考虑主动发起。",
-        "default": 90,
-        "min": 1,
-        "max": 10080,
-        "condition": {
-            "enable_proactive": true
-        }
-    },
-    "proactive_quiet_hours": {
-        "description": "免打扰时段",
-        "type": "string",
-        "hint": "该时段内不主动发消息。支持跨零点（如 23:30-07:30）。",
-        "default": "23:30-07:30",
-        "condition": {
-            "enable_proactive": true
-        }
-    },
-    "proactive_silent_max": {
-        "description": "静默连发上限（条）",
-        "type": "int",
-        "hint": "群里**一直没人说话**时，bot 最多连发几条主动消息就暂停（默认 2；填 0 = 不限制）。这是主动消息唯一的总量闸门 —— 群里没人时「空闲」判据永远满足，只剩最小间隔在拦，bot 会一条接一条地自言自语。等群里有人说话，计数立即归零、恢复正常。可按会话在管理页「主动消息 → 分会话配置 → 静默上限」单独设置。",
-        "default": 2,
-        "min": 0,
-        "max": 50,
-        "condition": {
-            "enable_proactive": true
-        }
-    },
     "enable_tts": {
-        "description": "═══ ⑨ 语音合成 ═══\n启用 TTS",
+        "description": "═══ ⑧ 语音合成 ═══\n启用 TTS",
         "type": "bool",
         "hint": "把回复同时合成为语音发出。合成失败会静默降级为纯文字。",
         "default": false
@@ -1259,7 +1218,7 @@
         }
     },
     "enable_admin_page": {
-        "description": "═══ ⑩ 管理页 ═══\n启用 WebUI 管理页",
+        "description": "═══ ⑨ 管理页 ═══\n启用 WebUI 管理页",
         "type": "bool",
         "hint": "启用管理接口与内置管理页面（WebUI → 插件 → ChatCore Neo → admin）。",
         "default": true

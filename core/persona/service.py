@@ -31,6 +31,13 @@ class PersonaService:
         self.reload()
 
     # ------------------------------------------------------------ 加载
+    def _rel(self, d: Path) -> str:
+        """报错用相对路径：`sr_xxx` 还是 `Honkai_Star_Rail/xxx` 一眼看清。"""
+        try:
+            return d.relative_to(self.root).as_posix()
+        except ValueError:
+            return d.name
+
     def reload(self) -> None:
         self.docs = {}
         self.errors = []
@@ -38,10 +45,12 @@ class PersonaService:
             try:
                 doc = PersonaDoc.load(d)
             except Exception as e:
-                self.errors.append(f"{d.name}: {e!r}")
+                self.errors.append(f"{self._rel(d)}: {e!r}")
                 continue
             if doc.id in self.docs:
-                self.errors.append(f"id 重复: {doc.id} ({d.name})")
+                self.errors.append(
+                    f"id 重复: {doc.id} ({self._rel(d)} 与 "
+                    f"{self._rel(self.docs[doc.id].dir)})")
                 continue
             self.docs[doc.id] = doc
         self._rebuild_index()
@@ -146,6 +155,8 @@ class PersonaService:
         return {
             "personas": len(self.docs),
             "worlds": self.worlds(),
+            "world_dirs": sorted({d.world_dir for d in self.docs.values()
+                                  if d.world_dir}),
             "aliases": sum(len(d.aliases) for d in self.docs.values()),
             "load_errors": list(self.errors),
         }

@@ -84,11 +84,23 @@ def describe(is_private: bool, override: dict | None = None,
     """给 WebUI 用：显式覆盖 + 解析后生效值 + 是否继承。"""
     mode, nsfw = resolve(is_private, override, global_mode)
     ov = override or {}
+    # 「继承」到底继承成什么，页面必须能直接显示出来 —— 否则私聊那行写着
+    # 「继承（全局设置）」，用户看不出它实际是剧情向（2026-10-30 用户反馈）。
+    default_mode = int(global_mode or MODE_NARRATIVE) if is_private else MODE_PLAIN
+    if default_mode not in (MODE_NARRATIVE, MODE_PLAIN):
+        default_mode = MODE_NARRATIVE if is_private else MODE_PLAIN
+    overridden = bool(ov.get("mode")) or ov.get("rules") is not None
     return {
         "override_mode": ov.get("mode"),
         "override_rules": ov.get("rules"),
         "mode": mode,
         "mode_label": MODE_LABELS.get(mode, str(mode)),
         "nsfw": nsfw,
-        "inherited": not (ov.get("mode") or ov.get("rules") is not None),
+        "inherited": not overridden,
+        # 不填覆盖时会用到的（会话类型默认）取值，供页面显示「继承（…）」
+        "default_mode": default_mode,
+        "default_label": MODE_LABELS.get(default_mode, str(default_mode)),
+        "default_nsfw": True if is_private else False,
+        # 该会话是否有显式覆盖（页面据此决定要不要给「清除」按钮）
+        "overridden": overridden,
     }

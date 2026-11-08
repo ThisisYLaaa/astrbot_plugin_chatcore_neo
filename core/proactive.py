@@ -163,6 +163,79 @@ def _norm_override(values: dict) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- 功能级默认参数
+#
+# 主动消息**不是实例配置的一部分**：它是一条独立的功能，参数分两层：
+#   * 功能默认（本文件同目录的 settings.json）：会话没填的项继承这里；
+#   * 会话配置（instances/<实例>/proactive/state.json 的 overrides）：
+#     这个会话要不要开口，以及它自己覆盖的间隔/空闲/免打扰/静默上限。
+#
+# 会话属于哪个实例**不单独存**：由 umo 前缀决定（`Banyan:GroupMessage:1`
+# → Banyan）。于是人格、记忆组、TTS 等一切"按实例"的东西自动跟着走，
+# 而这里只关心"这个会话要不要、什么时候开口"。
+SETTINGS_PATH = PROACTIVE_DIR / "settings.json"
+
+DEFAULT_SETTINGS = {
+    "min_interval": 45,        # 分钟
+    "idle_minutes": 90,        # 分钟
+    "quiet_hours": "",         # 如 23:30-07:30
+    "silent_max": 2,           # 群里没人说话时最多连发几条（0=不限）
+}
+
+
+def _norm_settings(values: dict) -> dict:
+    """把功能默认参数归一化：只收合法键、转成正确类型、免打扰必须能解析。"""
+    out = dict(DEFAULT_SETTINGS)
+    if not isinstance(values, dict):
+        return out
+    for k in ("min_interval", "idle_minutes"):
+        v = values.get(k)
+        if v not in (None, ""):
+            try:
+                out[k] = max(1, int(float(v)))
+            except (TypeError, ValueError):
+                pass
+    v = values.get("silent_max")
+    if v not in (None, ""):
+        try:
+            out["silent_max"] = max(0, int(float(v)))
+        except (TypeError, ValueError):
+            pass
+    q = str(values.get("quiet_hours") or "").strip()
+    if not q:
+        out["quiet_hours"] = ""
+    elif parse_quiet_hours(q) is not None:
+        out["quiet_hours"] = q
+    return out
+
+
+def load_settings() -> dict:
+    """读功能级默认参数；文件不存在/损坏一律回落到内置默认。"""
+    try:
+        raw = SETTINGS_PATH.read_text(encoding="utf-8").strip()
+        if not raw:
+            return dict(DEFAULT_SETTINGS)
+        return _norm_settings(json.loads(raw))
+    except FileNotFoundError:
+        return dict(DEFAULT_SETTINGS)
+    except Exception as e:
+        logger.warning(f"[chatcore_neo] 主动消息功能配置损坏，按默认处理: {e!r}")
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(values: dict) -> dict:
+    """写功能级默认参数（原子替换），返回归一化后的值。"""
+    out = _norm_settings(values)
+    try:
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SETTINGS_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(SETTINGS_PATH)
+    except Exception as e:
+        logger.warning(f"[chatcore_neo] 主动消息功能配置写入失败: {e!r}")
+    return out
+
+
 # ---------------------------------------------------------------- 调度器
 
 class ProactiveScheduler:
@@ -173,10 +246,15 @@ class ProactiveScheduler:
                  tick_seconds: int = 60, jitter: float = 0.25,
                  silent_max: int = 2,
                  state_path=None,
-                 known: Callable[[str], bool] | None = None) -> None:
+                 known: Callable[[str], bool] | None = None,
+                 scope: Callable[[str], bool] | None = None) -> None:
         # `known(umo)` 由宿主注入："这个会话现在还算一个真会话吗"。
         # 不注入（None）时一律视为已知 —— core/ 要能脱离框架单测。
         self._known = known
+        # `scope(umo)`：这个会话归不归当前调度器管（按实例切分）。
+        # 主动消息是全局功能，但每个实例跑自己那条循环 —— 不注入时不过滤
+        # （core/ 要能脱离框架单测）。
+        self._scope = scope
         # 每次 tick 出话前 await 的钩子（可选）：宿主用来刷新外部判据
         # （如 AstrBot 会话存活集），保证 `candidates()` 用的是最新状态。
         self._pre_tick: Callable[[], Any] | None = None
@@ -303,6 +381,19 @@ class ProactiveScheduler:
         return dict(self.state.overrides.get(str(umo), {}) or {})
 
     # ------------------------------------------------------------ 真伪会话
+    def set_scope(self, fn: Callable[[str], bool] | None) -> None:
+        """注入/替换「这个会话归不归我管」的判定（按实例切分用）。"""
+        self._scope = fn
+
+    def in_scope(self, umo: str) -> bool:
+        """按实例归属过滤。判定失败时 fail-open（宁可多发，不可静默掐死）。"""
+        if self._scope is None:
+            return True
+        try:
+            return bool(self._scope(umo))
+        except Exception:
+            return True
+
     def set_known(self, fn: Callable[[str], bool] | None) -> None:
         """注入/替换「真伪会话」判定（也可以构造时用 `known=` 传）。"""
         self._known = fn
@@ -350,7 +441,7 @@ class ProactiveScheduler:
 
         **两级开关，职责完全不同**：
 
-          ① 全局 `enabled`（配置里的 `enable_proactive`）= **放行**。
+          ① 全局 `enabled`（调度器自身的开关，构造时恒为 True）= **放行**。
              它只回答"这个功能允不允许被使用"，**不开启任何会话** ——
              打开它之后一个会话都不会开口，只是让下面的会话级开关能生效。
              关掉它 = 整个功能停，会话级配置一律不作数。
@@ -410,6 +501,8 @@ class ProactiveScheduler:
     def candidates(self, now: float | None = None) -> list[str]:
         out = []
         for umo in sorted(self.state.sessions):
+            if not self.in_scope(umo):
+                continue
             ok, _why = self.should_emit(umo, now)
             if ok:
                 out.append(umo)
@@ -529,15 +622,17 @@ class ProactiveScheduler:
         res = self.residue()
         ovs = self.state.overrides
         return {**self.stats,
-                # `enabled` = 全局总闸（配置里的 `enable_proactive`），
+                # `enabled` = 调度器自身的开关（产品里恒为 True，不再对应配置键），
                 # `running` = 循环真的在跑。两者必须分开报，页面才能既说清
                 # "开关是什么"又说清"到底有没有在工作"。
                 "enabled": self.enabled,
                 "running": self.running,
-                "sessions_on": sum(1 for ov in ovs.values()
-                                   if ov.get("enabled") is True),
-                "sessions_off": sum(1 for ov in ovs.values()
-                                    if ov.get("enabled") is False),
+                # 只统计**归本实例管**的会话：主动消息是全局功能，
+                # 但每个实例一条循环，报全局数字会让页面互相矛盾。
+                "sessions_on": sum(1 for u, ov in ovs.items()
+                                   if ov.get("enabled") is True and self.in_scope(u)),
+                "sessions_off": sum(1 for u, ov in ovs.items()
+                                    if ov.get("enabled") is False and self.in_scope(u)),
                 "min_interval_min": self.min_interval // 60,
                 "idle_threshold_min": self.idle_threshold // 60,
                 "silent_max": self.silent_max,
@@ -560,7 +655,7 @@ SIMULATED_USER_TEXT = (
 def _find_adapter(context: Any, platform_name: str) -> Any:
     """按平台名找到适配器实例。
 
-    UMO 的第一段是 `PlatformMetadata.**id**`（例如 "BotA" / "BotB"），
+    UMO 的第一段是 `PlatformMetadata.**id**`（例如 "Banyan" / "Sui"），
     而 `name` 是平台**类型**（多个适配器都叫 "aiocqhttp"），
     所以必须按 id 匹配。
     """
@@ -581,8 +676,8 @@ def _find_adapter(context: Any, platform_name: str) -> Any:
 
     if platform_name:
         # **先按 id 匹配**：UMO 的第一段是 `platform_meta.id`（本机
-        # id=BotA/BotB，而两个适配器的 name 都是 aiocqhttp）。
-        # 若先按 name 匹配，BotB 的会话会选中 BotA 适配器 → 以错误的
+        # id=Banyan/Sui，而两个适配器的 name 都是 aiocqhttp）。
+        # 若先按 name 匹配，Sui 的会话会选中 Banyan 适配器 → 以错误的
         # umo 甚至错误的账号发出主动消息。
         for inst in insts:
             m = meta_of(inst)
