@@ -1,0 +1,116 @@
+{
+  "note": [
+    "离线记忆召回评测集（hit@5 / MRR / precision@5）。",
+    "",
+    "这里是**合成样例**：query 与 expect_any 都是编的，只用来演示格式、",
+    "并给 `memory_eval.py` 一个可跑的最小输入。真跑分要换成自己的数据：",
+    "",
+    "  1. 把本文件替换成你的 case 列表（key/query/expect_any）；",
+    "  2. 向量快照（`data/memory_eval_vecs.json`）由脚本导出：",
+    "         python tests/memory_eval.py --dump-vectors",
+    "     该文件是**本机真实记忆的派生数据**，已列入 .gitignore，不要提交；",
+    "  3. 找不到向量的 case 会被记成 no_query_vector 跳过并显式计数。",
+    "",
+    "改排序类代码（分类衰减 / 取代降权 / top-k 去冗余）前后各跑一次对比：",
+    "    python tests/memory_eval.py            # 报告",
+    "    python tests/memory_eval.py --json     # 机器可读，用于 diff"
+  ],
+  "cases": [
+    {
+      "key": "demo:FriendMessage:100000001",
+      "query": "今晚开黑吗",
+      "expect_any": [
+        "游戏",
+        "开黑"
+      ]
+    },
+    {
+      "key": "demo:FriendMessage:100000001",
+      "query": "明天要早起上班",
+      "expect_any": [
+        "上班",
+        "早起"
+      ]
+    },
+    {
+      "key": "demo:FriendMessage:100000001",
+      "query": "这家店的拉面好吃",
+      "expect_any": [
+        "拉面",
+        "好吃"
+      ]
+    },
+    {
+      "key": "demo:FriendMessage:100000001",
+      "query": "外面下雨了记得带伞",
+      "expect_any": [
+        "下雨",
+        "伞"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "有人在打排位吗",
+      "expect_any": [
+        "排位",
+        "上分"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "新版本更新了什么",
+      "expect_any": [
+        "版本",
+        "更新"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "周末去爬山",
+      "expect_any": [
+        "爬山",
+        "周末"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "空调坏了太热",
+      "expect_any": [
+        "空调",
+        "热"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "帮我看看这道题",
+      "expect_any": [
+        "题",
+        "作业"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "猫又把杯子打翻了",
+      "expect_any": [
+        "猫",
+        "杯子"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "推荐一部电影",
+      "expect_any": [
+        "电影",
+        "推荐"
+      ]
+    },
+    {
+      "key": "demo:GroupMessage:200000001",
+      "query": "地铁二号线今天停运",
+      "expect_any": [
+        "地铁",
+        "停运"
+      ]
+    }
+  ]
+}
