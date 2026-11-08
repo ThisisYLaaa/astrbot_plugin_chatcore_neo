@@ -213,6 +213,9 @@ class FakePlugin:
         self._group_names = JsonMap(root / "_group_names.json")
         self._intent_last: dict = {}
         self._active_triggers: dict = {}
+        # 撤回拍一拍的节流表（对齐 main.py:__init__，缺了会让接线静态检查报盲点）
+        self._recall_poke_claims: dict = {}
+        self._recall_poke_at: dict = {}
         self._persona_switch_notice: dict = {}
         self._live: dict = {}
         self._mem_tasks: set = set()

@@ -281,6 +281,13 @@ class ChatCoreNeoPlugin(Star):
         self._intent_last: dict = {}
         # 本轮触发消息 id（umo -> message_id），供撤回取消匹配
         self._active_triggers: dict = {}
+        # 撤回拍一拍的节流表：
+        #   _recall_poke_claims: claim 键 -> 上次触发时间戳（同一条撤回只拍一次）
+        #   _recall_poke_at: umo -> 上次发送时间（每会话 3 秒冷却）
+        # 显式在 __init__ 里构造，不靠运行时 hasattr 懒初始化——
+        # tests/test_plugin_wiring.py 会用 AST 核对"main.py 用到的属性必须在 __init__ 里赋过值"。
+        self._recall_poke_claims: dict = {}
+        self._recall_poke_at: dict = {}
         # 人格切换提醒（umo -> 提醒文本）：/persona 切换后记下，
         # 在下一轮装配时以"系统通知"注入动态段，强制模型切换到新身份。
         # 不记的话，旧人格在历史上下文里刷过几十条，模型会沿惯性继续扮演
