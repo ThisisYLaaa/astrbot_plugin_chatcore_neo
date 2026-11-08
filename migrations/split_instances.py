@@ -8,7 +8,7 @@
 --------
 1. 每个启用的平台实例建 `instances/<id>/config.json`（当前全局配置的快照；
    第一个实例保留全量，其余套 MINIMAL_PRESET）。
-2. `instances/<id>/personas.json`：`persona_b` 只授权给 BotB，其余给 BotA。
+2. `instances/<id>/personas.json`：`diy_sui` 只授权给 Sui，其余给 Banyan。
 3. `memory.db` 拆库：复制一份，按 `umo` 前缀删掉别人的行。
 4. `graph.db` 拆库：复制一份，按本库现存 `source_memory_id` 剪枝。
 
@@ -39,7 +39,7 @@ LEGACY = PDATA / "_legacy" / f"pre_split_{time.strftime('%Y%m%d-%H%M%S')}"
 
 MINIMAL_OFF = {
     "enable_attention": False, "enable_segmentation": False,
-    "enable_markers": False, "enable_proactive": False,
+    "enable_markers": False,
     "enable_tts": False, "enable_streaming": False,
     "enable_no_reply_judge": False, "enable_intent": False,
     "enable_graph_retrieval": False, "costar_enabled": False,
@@ -106,9 +106,9 @@ def main() -> int:
     grants: dict[str, list[str]] = {}
     for iid in enabled:
         if iid.lower() == "sui":
-            grants[iid] = [p for p in personas if p == "persona_b"]
+            grants[iid] = [p for p in personas if p == "diy_sui"]
         else:
-            grants[iid] = [p for p in personas if p != "persona_b"]
+            grants[iid] = [p for p in personas if p != "diy_sui"]
 
     print("\n计划：")
     for iid in enabled:
