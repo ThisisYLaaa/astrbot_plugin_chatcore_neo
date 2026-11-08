@@ -6,7 +6,7 @@
 人格状态机、长期记忆、注意力判定、主动消息、流式分段、角色名识别、印象系统，
 再加上 **按平台实例隔离的配置与记忆库**、**人格池 × 实例的授权矩阵**。
 
-> 适用 AstrBot `>= 4.27.0`，Python `3.10+`。当前版本 **v2.1.0**（见 [CHANGELOG](CHANGELOG.md)）。
+> 适用 AstrBot `>= 4.27.0`，Python `3.10+`。当前版本 **v2.2.0**（见 [CHANGELOG](CHANGELOG.md)）。
 > 许可证 MIT，署名要求见文末。
 
 ---
@@ -436,7 +436,7 @@ python tests/memory_eval.py --json    # 机器可读，用于前后 diff
 
 ## 版本与更新日志
 
-当前版本 **v2.1.0**（`metadata.yaml` 的 `version` 与 [CHANGELOG](CHANGELOG.md) 顶部条目一致）。
+当前版本 **v2.2.0**（`metadata.yaml` 的 `version` 与 [CHANGELOG](CHANGELOG.md) 顶部条目一致）。
 
 - [CHANGELOG.md](CHANGELOG.md) — 逐版本的新增 / 变更 / 修复
 - 兼容性：`astrbot_version >= 4.27.0`；支持 `aiocqhttp`、`telegram`、`discord`、`webchat`
