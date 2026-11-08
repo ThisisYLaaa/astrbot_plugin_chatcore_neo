@@ -21,10 +21,18 @@ venv/
 migrations/*_report.json
 migrations/*.bak
 
+# 测试的向量快照（由本机真实记忆派生，只在本机用 --dump-vectors 生成）
+tests/data/memory_eval_vecs.json
+
 # 编辑器 / 系统
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 备份文件（含手工回滚用的 main.py.bak-<时间戳> / *.bak2-<时间戳>）
 *.bak
 *.bak-*
+*.bak2-*
+*.orig
+*.rej
